@@ -25,4 +25,12 @@ public class NewProjectContext extends JavaScriptObject
    public native final boolean isRcppAvailable() /*-{
       return this.rcpp_available;
    }-*/;
+   
+   public native final boolean isPackratAvailable() /*-{
+      return this.packrat_available;
+   }-*/;
+   
+   public native final String getWorkingDirectory() /*-{
+      return this.working_directory;
+   }-*/;
 }

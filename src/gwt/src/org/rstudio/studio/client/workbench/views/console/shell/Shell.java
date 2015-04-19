@@ -22,15 +22,17 @@ import com.google.gwt.core.client.Scheduler.ScheduledCommand;
 import com.google.gwt.event.dom.client.*;
 import com.google.gwt.user.client.Command;
 import com.google.inject.Inject;
+
+import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.CommandWithArg;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
+import org.rstudio.core.client.command.KeyboardHelper;
 import org.rstudio.core.client.command.KeyboardShortcut;
 import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.CommandLineHistory;
-import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.debugging.ErrorManager;
 import org.rstudio.studio.client.common.debugging.events.UnhandledErrorEvent;
 import org.rstudio.studio.client.common.debugging.model.ErrorHandlerType;
@@ -55,6 +57,7 @@ import org.rstudio.studio.client.workbench.views.console.shell.assist.HistoryCom
 import org.rstudio.studio.client.workbench.views.console.shell.assist.RCompletionManager;
 import org.rstudio.studio.client.workbench.views.console.shell.editor.InputEditorDisplay;
 import org.rstudio.studio.client.workbench.views.environment.events.DebugModeChangedEvent;
+import org.rstudio.studio.client.workbench.views.source.editors.text.DocDisplay;
 import org.rstudio.studio.client.workbench.views.source.editors.text.ace.AceEditorNative;
 
 import java.util.ArrayList;
@@ -89,7 +92,6 @@ public class Shell implements ConsoleInputHandler,
                 EventBus eventBus,
                 Display display,
                 Session session,
-                GlobalDisplay globalDisplay,
                 Commands commands,
                 UIPrefs uiPrefs, 
                 ErrorManager errorManager)
@@ -101,7 +103,6 @@ public class Shell implements ConsoleInputHandler,
       server_ = server ;
       eventBus_ = eventBus ;
       view_ = display ;
-      globalDisplay_ = globalDisplay;
       commands_ = commands;
       errorManager_ = errorManager;
       input_ = view_.getInputEditorDisplay() ;
@@ -142,7 +143,10 @@ public class Shell implements ConsoleInputHandler,
                                           new CompletionPopupPanel(), 
                                           server, 
                                           null,
-                                          null) ;
+                                          null,
+                                          null,
+                                          (DocDisplay) view_.getInputEditorDisplay(),
+                                          true);
       addKeyDownPreviewHandler(completionManager) ;
       addKeyPressPreviewHandler(completionManager) ;
       
@@ -486,16 +490,7 @@ public class Shell implements ConsoleInputHandler,
                if (view_.isPromptEmpty())
                {
                   // interrupt server
-                  server_.interrupt(new VoidServerRequestCallback() {
-                     @Override
-                     public void onError(ServerError error)
-                     {
-                        super.onError(error);
-                        globalDisplay_.showErrorMessage(
-                              "Error Interrupting Server",
-                              error.getUserMessage());
-                     }
-                  });
+                  server_.interrupt(new VoidServerRequestCallback());
                }
                else
                {
@@ -522,12 +517,25 @@ public class Shell implements ConsoleInputHandler,
             }
             else if (mod == KeyboardShortcut.ALT)
             {
+               if (KeyboardHelper.isHyphenKeycode(keyCode))
+               {
+                  event.preventDefault();
+                  event.stopPropagation();
+                  input_.replaceSelection(" <- ", true);
+               }
+            }
+            else if (
+                  (BrowseCap.hasMetaKey() && 
+                   (mod == (KeyboardShortcut.META + KeyboardShortcut.SHIFT))) ||
+                  (!BrowseCap.hasMetaKey() && 
+                   (mod == (KeyboardShortcut.CTRL + KeyboardShortcut.SHIFT))))
+            {
                switch (keyCode)
                {
-                  case 189: // hyphen
+                  case KeyCodes.KEY_M:
                      event.preventDefault();
                      event.stopPropagation();
-                     input_.replaceSelection(" <- ", true);
+                     input_.replaceSelection(" %>% ", true);
                      break;
                }
             }
@@ -621,7 +629,6 @@ public class Shell implements ConsoleInputHandler,
    private final ConsoleServerOperations server_ ;
    private final EventBus eventBus_ ;
    private final Display view_ ;
-   private final GlobalDisplay globalDisplay_;
    private final Commands commands_;
    private final ErrorManager errorManager_;
    private final InputEditorDisplay input_ ;
@@ -631,7 +638,7 @@ public class Shell implements ConsoleInputHandler,
    private boolean addToHistory_ ;
    private String lastPromptText_ ;
    private final UIPrefs prefs_;
-
+ 
    private final CommandLineHistory historyManager_;
    private final CommandLineHistory browseHistoryManager_;
    

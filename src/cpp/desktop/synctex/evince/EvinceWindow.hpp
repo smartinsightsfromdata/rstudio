@@ -16,6 +16,7 @@
 #ifndef DESKTOP_SYNCTEX_EVINCEWINDOW_HPP
 #define DESKTOP_SYNCTEX_EVINCEWINDOW_HPP
 
+#undef QT_NO_CAST_FROM_ASCII
 #include <QtCore/QObject>
 #include <QtCore/QByteArray>
 #include <QtCore/QList>
@@ -24,9 +25,11 @@
 #include <QtCore/QStringList>
 #include <QtCore/QVariant>
 #include <QtDBus/QtDBus>
+#define QT_NO_CAST_FROM_ASCII
 
 #include <DesktopSynctex.hpp>
 
+namespace rstudio {
 namespace desktop {
 namespace synctex {
 
@@ -57,7 +60,7 @@ public Q_SLOTS: // METHODS
        {
           QFileInfo srcFileInfo(srcFilePath);
           srcFilePath = srcFileInfo.canonicalPath() +
-                        QString::fromAscii("/./") +
+                        QString::fromUtf8("/./") +
                         srcFileInfo.fileName();
        }
 
@@ -78,11 +81,12 @@ private:
 
 } // namespace synctex
 } // namespace desktop
+} // namespace rstudio
 
 namespace org {
   namespace gnome {
     namespace evince {
-      typedef desktop::synctex::EvinceWindow Window;
+      typedef rstudio::desktop::synctex::EvinceWindow Window;
     }
   }
 }

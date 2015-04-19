@@ -26,13 +26,20 @@ var Tokenizer = require("ace/tokenizer").Tokenizer;
 var RHtmlHighlightRules = require("mode/rhtml_highlight_rules").RHtmlHighlightRules;
 var SweaveBackgroundHighlighter = require("mode/sweave_background_highlighter").SweaveBackgroundHighlighter;
 var RCodeModel = require("mode/r_code_model").RCodeModel;
+var Utils = require("mode/utils");
 
-var Mode = function(suppressHighlighting, doc, session) {
+var Mode = function(suppressHighlighting, session) {
    this.$session = session;
    this.$tokenizer = new Tokenizer(new RHtmlHighlightRules().getRules());
 
-   this.codeModel = new RCodeModel(doc, this.$tokenizer, /^r-/,
-                                   /^<!--\s*begin.rcode\s*(.*)/);
+   this.codeModel = new RCodeModel(
+      session,
+      this.$tokenizer,
+      /^r-/,
+      /^<!--\s*begin.rcode\s*(.*)/,
+      /^\s*end.rcode\s*-->/
+   );
+   
    this.foldingRules = this.codeModel;
    this.$sweaveBackgroundHighlighter = new SweaveBackgroundHighlighter(
          session,
@@ -43,6 +50,7 @@ var Mode = function(suppressHighlighting, doc, session) {
 oop.inherits(Mode, HtmlMode);
 
 (function() {
+
    this.insertChunkInfo = {
       value: "<!--begin.rcode\n\nend.rcode-->\n",
       position: {row: 0, column: 15}
@@ -50,12 +58,18 @@ oop.inherits(Mode, HtmlMode);
     
    this.getLanguageMode = function(position)
    {
-      return this.$session.getState(position.row).match(/^r-/) ? 'R' : 'HTML';
+      var state = Utils.getPrimaryState(this.$session, position.row);
+      return state.match(/^r-/) ? 'R' : 'HTML';
    };
 
-   this.getNextLineIndent = function(state, line, tab, tabSize, row)
+   this.$getNextLineIndent = this.getNextLineIndent;
+   this.getNextLineIndent = function(state, line, tab, row)
    {
-      return this.codeModel.getNextLineIndent(row, line, state, tab, tabSize);
+      var mode = Utils.activeMode(state, "html");
+      if (mode === "r")
+         return this.codeModel.getNextLineIndent(state, line, tab, row);
+      else
+         return this.$getNextLineIndent(state, line, tab);
    };
 
 }).call(Mode.prototype);

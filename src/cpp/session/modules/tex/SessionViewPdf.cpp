@@ -25,8 +25,9 @@
 
 #define kPdfJsPath "/pdf_js/"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace tex {
@@ -40,7 +41,7 @@ void handleViewPdf(const http::Request& request, http::Response* pResponse)
    FilePath filePath(request.queryParamValue("path"));
    if (!filePath.exists())
    {
-      pResponse->setError(http::status::NotFound, "File not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -98,4 +99,5 @@ Error initialize()
 } // namespace tex
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

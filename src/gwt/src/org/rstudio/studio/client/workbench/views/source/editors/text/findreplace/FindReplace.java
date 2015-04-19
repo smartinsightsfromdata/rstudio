@@ -145,6 +145,10 @@ public class FindReplace
                return ;
             }
             
+            // bail on control characters
+            if (event.getNativeKeyCode() < 32)
+               return;
+            
             // perform incremental search
             find(defaultForward_ ? FindType.Forward : FindType.Reverse, true);
          }
@@ -197,6 +201,16 @@ public class FindReplace
    private boolean find(FindType findType)
    {
       return find(findType, false);
+   }
+   
+   public void selectAll()
+   {
+      String searchString = display_.getFindValue().getValue();
+      if (searchString.length() != 0)
+      {
+         editor_.selectAll(searchString);
+         editor_.focus();
+      }
    }
    
    private boolean find(FindType findType, boolean incremental)
@@ -339,9 +353,13 @@ public class FindReplace
       boolean caseSensitive = display_.getCaseSensitive().getValue();
       boolean regex = display_.getRegex().getValue();
       String find = display_.getFindValue().getValue();
+      boolean wholeWord = display_.getWholeWord().getValue();
 
       String flags = caseSensitive ? "gm" : "igm";
       String query = regex ? find : Pattern.escape(find);
+      if (wholeWord)
+         query = "\\b" + query + "\\b";
+      
       return Pattern.create(query, flags);
    }
 
@@ -387,6 +405,15 @@ public class FindReplace
 
             // Point to the end of this match
             pos = index + m.getValue().length();
+            
+            // If the data matched is an empty string (which can happen for
+            // regexps that don't consume characters such as ^ or $), then we
+            // didn't advance the state of the underlying RegExp object, and
+            // we'll loop forever (see case 4191). Bail out.
+            if (m.getValue().length() == 0)
+            {
+               break;
+            }
          }
          result.append(code, pos, code.length());
 

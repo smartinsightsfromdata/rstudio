@@ -38,10 +38,12 @@
 #include <server/ServerUriHandlers.hpp>
 #include <server/ServerSessionProxy.hpp>
 
+namespace rstudio {
 namespace server {
 namespace pam_auth {
 
 bool canSetSignInCookies();
+bool canStaySignedIn();
 void onUserAuthenticated(const std::string& username,
                          const std::string& password);
 void onUserUnauthenticated(const std::string& username);
@@ -79,6 +81,8 @@ const char * const kErrorDisplay = "errorDisplay";
 const char * const kErrorMessage = "errorMessage";
 
 const char * const kFormAction = "formAction";
+
+const char * const kStaySignedInDisplay = "staySignedInDisplay";
 
 
 std::string applicationURL(const http::Request& request,
@@ -172,6 +176,7 @@ void signIn(const http::Request& request,
    std::string error = request.queryParamValue(kErrorParam);
    variables[kErrorMessage] = error;
    variables[kErrorDisplay] = error.empty() ? "none" : "block";
+   variables[kStaySignedInDisplay] = canStaySignedIn() ? "block" : "none";
    if (server::options().authEncryptPassword())
       variables[kFormAction] = "action=\"javascript:void\" "
                                "onsubmit=\"submitRealForm();return false\"";
@@ -207,7 +212,7 @@ void setSignInCookies(const core::http::Request& request,
                       core::http::Response* pResponse)
 {
    boost::optional<boost::gregorian::days> expiry;
-   if (persist)
+   if (persist && canStaySignedIn())
       expiry = boost::gregorian::days(3652);
    else
       expiry = boost::none;
@@ -398,3 +403,4 @@ Error initialize()
 
 } // namespace pam_auth
 } // namespace server
+} // namespace rstudio

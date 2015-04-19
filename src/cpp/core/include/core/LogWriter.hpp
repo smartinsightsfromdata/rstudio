@@ -18,6 +18,7 @@
 
 #include <core/system/System.hpp>
 
+namespace rstudio {
 namespace core {
 
 class LogWriter
@@ -32,6 +33,11 @@ public:
                     core::system::LogLevel level,
                     const std::string& message) = 0;
 
+   // for subclasses that can do automatic chaining to stderr
+   // (defaults to no-op, implemented by SyslogLogWriter)
+   virtual void setLogToStderr(bool logToStderr) {}
+
+
 protected:
    std::string formatLogEntry(const std::string& programIdentify,
                               const std::string& message,
@@ -40,10 +46,13 @@ protected:
 
 namespace system {
 
+void setLogToStderr(bool logToStderr);
+
 void addLogWriter(boost::shared_ptr<core::LogWriter> pLogWriter);
 
 } // namespace system
 
 } // namespace core
+} // namespace rstudio
 
 #endif // LOG_WRITER_HPP

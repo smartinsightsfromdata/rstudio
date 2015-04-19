@@ -26,10 +26,12 @@ import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.workbench.codesearch.model.CodeSearchServerOperations;
 import org.rstudio.studio.client.workbench.views.buildtools.model.BuildServerOperations;
 import org.rstudio.studio.client.workbench.views.files.model.FilesServerOperations;
+import org.rstudio.studio.client.workbench.views.output.lint.model.LintServerOperations;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationServerOperations;
 import org.rstudio.studio.client.workbench.views.source.editors.text.IconvListResult;
 
 import java.util.HashMap;
+import java.util.List;
 
 /**
  * The server manages a "working list" of documents that are being edited by
@@ -40,10 +42,12 @@ import java.util.HashMap;
 public interface SourceServerOperations extends FilesServerOperations, 
                                                 CodeToolsServerOperations,
                                                 CodeSearchServerOperations,
+                                                CppServerOperations,
                                                 TexServerOperations,
                                                 HTMLPreviewServerOperations,
                                                 BuildServerOperations,
-                                                PresentationServerOperations
+                                                PresentationServerOperations,
+                                                LintServerOperations
 {
    /**
     * Create a new, empty document, without a path but with a unique ID, and
@@ -149,6 +153,9 @@ public interface SourceServerOperations extends FilesServerOperations,
     */
    void modifyDocumentProperties(String id, HashMap<String, String> properties,
                                  ServerRequestCallback<Void> requestCallback);
+   
+   void getDocumentProperties(String path, 
+                              ServerRequestCallback<JsObject> requestCallback);
 
    void revertDocument(String id,
                        String fileType,
@@ -185,5 +192,28 @@ public interface SourceServerOperations extends FilesServerOperations,
    
    void getScriptRunCommand(String interpreter,
                             String path,
+                            ServerRequestCallback<String> requestCallback);
+   
+   void getMinimalSourcePath(String path, 
+                             ServerRequestCallback<String> requestCallback);
+   
+   void setDocOrder(
+         List<String> order, ServerRequestCallback<Void> requestCallback); 
+   
+   void removeCachedData(String cacheKey, 
+                         ServerRequestCallback<Void> requestCallback);
+   
+   void duplicateDataView(String caption, String envName, String objName, 
+                          String cacheKey,
+                          ServerRequestCallback<DataItem> requestCallback);
+   
+   void ensureFileExists(String path,
+                         ServerRequestCallback<Boolean> requestCallback);
+   
+   public void getFileContents(String path,
+                               String encoding,
+                               ServerRequestCallback<String> requestCallback);
+   
+   public void executeRCode(String code,
                             ServerRequestCallback<String> requestCallback);
 }

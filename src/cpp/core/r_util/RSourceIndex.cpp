@@ -13,6 +13,9 @@
  *
  */
 
+// #define RSTUDIO_DEBUG_LABEL "source_index"
+// #define RSTUDIO_ENABLE_DEBUG_MACROS
+
 #include <core/r_util/RSourceIndex.hpp>
 
 #include <boost/algorithm/string.hpp>
@@ -20,9 +23,20 @@
 #include <core/StringUtils.hpp>
 
 #include <core/r_util/RTokenizer.hpp>
+#include <core/Macros.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
+
+using namespace token_utils;
+
+// static members
+std::set<std::string> RSourceIndex::s_allInferredPkgNames_;
+std::set<std::string> RSourceIndex::s_importedPackages_;
+RSourceIndex::ImportFromMap RSourceIndex::s_importFromDirectives_;
+std::map<std::string, PackageInformation> RSourceIndex::s_packageInformation_;
+FunctionInformation RSourceIndex::s_noSuchFunction_;
 
 namespace {
 
@@ -82,7 +96,7 @@ bool advancePastNextToken(
 
 bool advancePastNextToken(RTokens::const_iterator* pBegin,
                           RTokens::const_iterator end,
-                          const wchar_t type)
+                          RToken::TokenType type)
 {
    return advancePastNextToken(pBegin,
                                end,
@@ -189,6 +203,16 @@ void parseSignature(RTokens::const_iterator begin,
    }
 }
 
+bool isMethodOrClassDefinition(const RToken& token)
+{
+   return token.contentStartsWith(L"set") && (
+            token.contentEquals(L"setGeneric") ||
+            token.contentEquals(L"setMethod") ||
+            token.contentEquals(L"setClass") ||
+            token.contentEquals(L"setGroupGeneric") ||
+            token.contentEquals(L"setClassUnion") ||
+            token.contentEquals(L"setRefClass"));
+}
 
 }  // anonymous namespace
 
@@ -196,6 +220,9 @@ RSourceIndex::RSourceIndex(const std::string& context,
                            const std::string& code)
    : context_(context)
 {
+   // clear any (source-local) inferred packages
+   inferredPkgNames_.clear();
+
    // convert code to wide
    std::wstring wCode = string_utils::utf8ToWide(code, context);
 
@@ -211,8 +238,13 @@ RSourceIndex::RSourceIndex(const std::string& context,
    // tokenize
    RTokens rTokens(wCode, RTokens::StripWhitespace | RTokens::StripComments);
 
-   // scan for function, method, and class definitions (track indent level)
+   // track nest level
    int braceLevel = 0;
+   int parenLevel = 0;
+   int bracketLevel = 0;
+   int doubleBracketLevel = 0;
+   
+   // scan for function, method, and class definitions
    std::wstring function(L"function");
    std::wstring set(L"set");
    std::wstring setGeneric(L"setGeneric");
@@ -221,10 +253,19 @@ RSourceIndex::RSourceIndex(const std::string& context,
    std::wstring setClass(L"setClass");
    std::wstring setClassUnion(L"setClassUnion");
    std::wstring setRefClass(L"setRefClass");
+   
+   // operator tokens
    std::wstring eqOp(L"=");
    std::wstring assignOp(L"<-");
    std::wstring parentAssignOp(L"<<-");
-   for (std::size_t i=0; i<rTokens.size(); i++)
+   
+   // library, require (requireNamespace?)
+   std::wstring package(L"package");
+   std::wstring library(L"library");
+   std::wstring require(L"require");
+   
+   std::size_t n = rTokens.size();
+   for (std::size_t i = 0; i < n; ++i)
    {
       // initial name, qualifer, and type are nil
       RSourceItem::Type type = RSourceItem::None;
@@ -235,27 +276,23 @@ RSourceIndex::RSourceIndex(const std::string& context,
 
       // alias the token
       const RToken& token = rTokens.at(i);
-
-      // see if this is a begin or end brace and update the level
-      if (token.type() == RToken::LBRACE)
-      {
-         braceLevel++;
-         continue;
-      }
-
-      else if (token.type() == RToken::RBRACE)
-      {
-         braceLevel--;
-         continue;
-      }
-      // bail for non-identifiers
-      else if (token.type() != RToken::ID)
-      {
-         continue;
-      }
+      DEBUG("Current token: " << token);
+      
+      // update brace nesting levels
+      braceLevel += token.isType(RToken::LBRACE);
+      braceLevel -= token.isType(RToken::RBRACE);
+      
+      parenLevel += token.isType(RToken::LPAREN);
+      parenLevel -= token.isType(RToken::RPAREN);
+      
+      bracketLevel += token.isType(RToken::LBRACKET);
+      bracketLevel -= token.isType(RToken::RBRACKET);
+      
+      doubleBracketLevel += token.isType(RToken::LDBRACKET);
+      doubleBracketLevel -= token.isType(RToken::RDBRACKET);
 
       // is this a potential method or class definition?
-      if (token.contentStartsWith(set))
+      if (isMethodOrClassDefinition(token))
       {
          RSourceItem::Type setType = RSourceItem::None;
 
@@ -321,9 +358,10 @@ RSourceIndex::RSourceIndex(const std::string& context,
              !opToken.isOperator(parentAssignOp))
             continue;
 
-         // check for an identifier
+         // check for an identifier or string
          const RToken& idToken = rTokens.at(i-2);
-         if ( idToken.type() != RToken::ID )
+         if (!(idToken.type() == RToken::ID ||
+               idToken.type() == RToken::STRING))
             continue;
 
          // if there is another previous token make sure it isn't a
@@ -341,6 +379,166 @@ RSourceIndex::RSourceIndex(const std::string& context,
          name = idToken.content();
          tokenOffset = idToken.offset();
       }
+      
+      // is this a call to 'shinyServer' or 'shinyUI'?
+      else if (token.contentEquals(L"shinyServer") ||
+               token.contentEquals(L"shinyUI") ||
+               token.contentEquals(L"shinyApp") ||
+               token.contentEquals(L"shinyAppDir"))
+      {
+         addInferredPackage("shiny");
+      }
+      
+      // is this a library / require call?
+      else if (token.contentEquals(library) ||
+               token.contentEquals(require))
+      {
+         DEBUG("** Checking library token!");
+         
+         // make sure we have enough tokens available
+         if (i + 3 >= rTokens.size())
+            continue;
+         
+         // check for an open paren following
+         const RToken& lParenToken = rTokens.at(i + 1);
+         if (lParenToken.type() != RToken::LPAREN)
+            continue;
+         
+         // ensure that the following token is not a closing paren
+         if (static_cast<const RToken&>(rTokens.at(i + 2)).type() == RToken::RPAREN)
+            continue;
+         
+         // walk forward until we find an associated closing paren -- we'll have to
+         // look ahead a bit, and count parens as we go. also attempt to figure out
+         // what the 'package' and 'character.only' arguments resolve to
+         bool characterOnly = false;
+         
+         // assume that the package token is the first argument (but change our minds later
+         // if necessary)
+         RToken packageToken = rTokens.at(i + 2);
+         
+         std::size_t endParenIndex = i + 2;
+         bool foundRightParen = false;
+         int parenCount = 0;
+         for (int count = 0; count < 30; ++count)
+         {
+            if (endParenIndex + count >= rTokens.size())
+               break;
+            
+            const RToken& currentToken = rTokens.at(endParenIndex + count);
+            DEBUG("- Current token: '" << string_utils::wideToUtf8(currentToken.content()) << "'");
+            
+            if (currentToken.type() == RToken::LPAREN)
+               ++parenCount;
+            
+            if (currentToken.type() == RToken::RPAREN)
+            {
+               if (parenCount == 0)
+               {
+                  DEBUG("- Found closing right paren");
+                  foundRightParen = true;
+                  break;
+               }
+               --parenCount;
+            }
+            
+            // if we encounter 'package =', update the package setting
+            if (currentToken.contentEquals(package) &&
+                endParenIndex + count + 2 < rTokens.size())
+            {
+               const RToken& nextToken = rTokens.at(endParenIndex + count + 1);
+               if (nextToken.contentEquals(eqOp))
+               {
+                  // note -- validate later whether this is appropriate as a package name
+                  packageToken = rTokens.at(endParenIndex + count + 2);
+               }
+            }
+            
+            // if we encounter the token 'character.only', assume that it's
+            // set to TRUE, ie,
+            //
+            //    library("foo", character.only = TRUE)
+            //
+            // it would be unlikely someone would set character.only = FALSE
+            // which is the default
+            if (currentToken.contentEquals(L"character.only"))
+            {
+               DEBUG("- - Setting 'characterOnly' to true");
+               characterOnly = true;
+            }
+            
+         }
+         
+         if (!foundRightParen)
+            continue;
+         
+         // if 'character.only' is TRUE and 'package' is not a string, bail
+         if (characterOnly && packageToken.type() != RToken::STRING)
+         {
+            DEBUG("* characterOnly is true but package token'"
+                  << string_utils::wideToUtf8(packageToken.content())
+                  << "' is not a string");
+            continue;
+         }
+         
+         // otherwise, take the name of the package and cache it
+         std::wstring packageName = packageToken.type() == RToken::STRING ?
+                  removeQuoteDelims(packageToken.content()) :
+                  packageToken.content();
+         
+         DEBUG("** Adding package '" << string_utils::wideToUtf8(packageName) << "'");
+         DEBUG("");
+
+         addInferredPackage(string_utils::wideToUtf8(packageName));
+
+         continue;
+      }
+      
+      // is this some other kind of assignment?
+      // we want to add e.g.
+      //
+      //    foo <- 1
+      //
+      // to the source index here
+      else if (i >= 1 && isLeftAssign(rTokens.at(i - 1)))
+      {
+         // bail if we're not at the top level
+         if (braceLevel || parenLevel || bracketLevel || doubleBracketLevel)
+         {
+            DEBUG("Bailing: [" << braceLevel << ", " << parenLevel << ", " <<
+                  bracketLevel << ", " << doubleBracketLevel << "]");
+            continue;
+         }
+         
+         // ensure the token previous to the left assign is
+         // an identifier or string
+         const RToken& idToken = rTokens.at(i - 2);
+         DEBUG("- Token: " << idToken);
+         
+         if (!(isId(idToken) || isString(idToken)))
+         {
+            DEBUG("* Not an id or string");
+            continue;
+         }
+         
+         // ensure the token previous to the assignment token
+         // is not a binary operator
+         if (i > 2)
+         {
+            const RToken& beforeId = rTokens.at(i - 3);
+            if (isBinaryOp(beforeId))
+            {
+               DEBUG("* Has binary op before; skipping");
+               continue;
+            }
+         }
+            
+         // if we get this far then it's a variable def'n
+         type = RSourceItem::Variable;
+         name = idToken.content();
+         tokenOffset = idToken.offset();
+      }
+      
       else
       {
          continue;
@@ -368,10 +566,12 @@ RSourceIndex::RSourceIndex(const std::string& context,
                                    braceLevel,
                                    line,
                                    column));
+
    }
 }
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 

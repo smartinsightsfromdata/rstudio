@@ -19,8 +19,8 @@ import com.google.gwt.dom.client.Element;
 import com.google.gwt.event.shared.HandlerRegistration;
 import com.google.gwt.event.shared.HasHandlers;
 import com.google.gwt.user.client.Command;
-import org.rstudio.core.client.CommandWithArg;
 
+import org.rstudio.core.client.CommandWithArg;
 import java.util.LinkedList;
 
 public class AceEditorNative extends JavaScriptObject {
@@ -71,6 +71,20 @@ public class AceEditorNative extends JavaScriptObject {
       this.setReadOnly(readOnly);
    }-*/;
    
+   public native final void setCompletionOptions(boolean enabled,
+                                                 boolean snippets,
+                                                 boolean live,
+                                                 int characterThreshold,
+                                                 int delayMilliseconds) /*-{
+      this.setOptions({
+        enableBasicAutocompletion: enabled,
+        enableSnippets: enabled && snippets,
+        enableLiveAutocompletion: enabled && live,
+        completionCharacterThreshold: characterThreshold,
+        completionDelay: delayMilliseconds
+      });
+   }-*/;
+   
    public native final void toggleCommentLines() /*-{
       this.toggleCommentLines();
    }-*/;
@@ -98,7 +112,10 @@ public class AceEditorNative extends JavaScriptObject {
    public native final void addKeyboardHandler(KeyboardHandler keyboardHandler) /*-{
       this.keyBinding.addKeyboardHandler(keyboardHandler);
    }-*/;
-
+   
+   public native final boolean isVimInInsertMode() /*-{
+      return this.state.cm.state.vim.insertMode;
+   }-*/;
 
    public native final void onChange(CommandWithArg<AceDocumentChangeEventNative> command) /*-{
       this.getSession().on("change",
@@ -166,6 +183,14 @@ public class AceEditorNative extends JavaScriptObject {
       var loader = require("rstudio/loader");
       return loader.loadEditor(container);
    }-*/;
+   
+   public final native void manageDefaultKeybindings() /*-{
+      // We bind 'Ctrl + Shift + M' to insert a magrittr shortcut on Windows
+      delete this.commands.commandKeyBinding["ctrl-shift-m"];
+      
+      // We bind 'Ctrl + Shift + P' to run previous code on Windows
+      delete this.commands.commandKeyBinding["ctrl-shift-p"];
+   }-*/;
 
    public static <T> HandlerRegistration addEventListener(
          JavaScriptObject target,
@@ -189,6 +214,8 @@ public class AceEditorNative extends JavaScriptObject {
          String eventName,
          CommandWithArg<T> command) /*-{
       var callback = $entry(function(arg) {
+         if (arg && arg.text)
+            arg = arg.text;
          command.@org.rstudio.core.client.CommandWithArg::execute(Ljava/lang/Object;)(arg);
       });
 
@@ -210,8 +237,8 @@ public class AceEditorNative extends JavaScriptObject {
       this.scrollToLine(line, center);
    }-*/;
    
-   public final native void jumpToMatching()  /*-{
-      this.jumpToMatching();
+   public final native void jumpToMatching(boolean select, boolean expand) /*-{
+      this.jumpToMatching(select, expand);
    }-*/;
    
    public native final void revealRange(Range range, boolean animate) /*-{
@@ -254,4 +281,56 @@ public class AceEditorNative extends JavaScriptObject {
    public final native int getLastVisibleRow() /*-{
       return this.getLastVisibleRow();
    }-*/;
+   
+   public final native int findAll(String needle) /*-{
+      return this.findAll(needle);
+   }-*/;
+   
+   public final native void insert(String text) /*-{
+      var that = this;
+      this.forEachSelection(function() {
+         that.insert(text);
+      });
+   }-*/;
+   
+   public final native void moveCursorLeft(int times) /*-{
+      var that = this;
+      this.forEachSelection(function() {
+         that.navigateLeft(times);
+      });
+   }-*/;
+   
+   public final native void moveCursorRight(int times) /*-{
+      var that = this;
+      this.forEachSelection(function() {
+         that.navigateRight(times);
+      });
+   }-*/;
+   
+   public final native void expandSelectionLeft(int times) /*-{
+      var that = this;
+      this.forEachSelection(function() {
+         var selection = that.getSelection();
+         for (var i = 0; i < times; i++)
+            selection.selectLeft();
+      });
+   }-*/;
+   
+   public final native void expandSelectionRight(int times) /*-{
+      var that = this;
+      this.forEachSelection(function() {
+         var selection = that.getSelection();
+         for (var i = 0; i < times; i++)
+            selection.selectRight();
+      });
+   }-*/;
+   
+   public final native Position getCursorPosition() /*-{
+      return this.getCursorPosition();
+   }-*/;
+   
+   public final native void blockOutdent() /*-{
+      return this.blockOutdent();
+   }-*/;
+   
 }

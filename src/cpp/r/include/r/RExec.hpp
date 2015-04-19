@@ -28,15 +28,19 @@
 #include <core/system/System.hpp>
 
 #include <r/RSexp.hpp> 
+#include <r/RInterface.hpp>
 
 
+namespace rstudio {
 namespace core {
    class FilePath;
+}
 }
 
 // IMPORTANT NOTE: all code in r::exec must provide "no jump" guarantee.
 // See comment in RInternal.hpp for more info on this
 
+namespace rstudio {
 namespace r {
 namespace exec {
    
@@ -229,6 +233,8 @@ private:
 
 void warning(const std::string& warning);
    
+void message(const std::string& message);
+
 // special exception type used to raise R errors. allows for correct
 // exiting from c++ context (with destructors called, etc.) while still
 // propagating the error to a point where it will be re-raised to r
@@ -274,10 +280,33 @@ private:
    boost::scoped_ptr<core::system::SignalBlocker> pSignalBlocker_;
 };
 
+// returns true if the global context is on the top (i.e. the context stack is
+// empty and we're not debugging)
+bool atTopLevelContext();
+
+// create a scope for disabling debugging while evaluating an expression in a
+// given environment--this is needed to protect internal functions from being
+// stepped into when we execute them while the user is stepping while
+// debugging. R does this itself for expressions entered at the Browse prompt,
+// but we need to do it manually. 
+// Discussion here: https://bugs.r-project.org/bugzilla/show_bug.cgi?id=15770
+class DisableDebugScope : boost::noncopyable
+{
+public:
+   DisableDebugScope(SEXP env);
+   virtual ~DisableDebugScope();
+
+private:
+   int rdebug_;  // stored debug flag
+   SEXP env_;    // debug environment (or NULL if not debugging)
+};
+
+
 class InterruptException {};
-   
+
 } // namespace exec   
 } // namespace r
+} // namespace rstudio
 
 
 #endif // R_R_EXEC_HPP 

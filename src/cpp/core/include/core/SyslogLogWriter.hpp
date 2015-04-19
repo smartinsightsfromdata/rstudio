@@ -18,6 +18,7 @@
 
 #include <core/LogWriter.hpp>
 
+namespace rstudio {
 namespace core {
 
 class SyslogLogWriter : public LogWriter
@@ -31,11 +32,17 @@ public:
                      core::system::LogLevel level,
                      const std::string& message);
 
+    virtual void setLogToStderr(bool logToStderr)
+    {
+       logToStderr_ = logToStderr;
+    }
+
 private:
     std::string programIdentity_;
     bool logToStderr_;
 };
 
 } // namespace core
+} // namespace rstudio
 
 #endif // SYSLOG_LOG_WRITER_HPP

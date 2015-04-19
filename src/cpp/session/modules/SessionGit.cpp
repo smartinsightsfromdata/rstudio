@@ -64,14 +64,15 @@
 
 #include "session-config.h"
 
-using namespace core;
-using namespace core::shell_utils;
-using session::console_process::ConsoleProcess;
-using namespace session::modules::vcs_utils;
-using session::modules::source_control::FileWithStatus;
-using session::modules::source_control::VCSStatus;
-using session::modules::source_control::StatusResult;
+using namespace rstudio::core;
+using namespace rstudio::core::shell_utils;
+using rstudio::session::console_process::ConsoleProcess;
+using namespace rstudio::session::modules::vcs_utils;
+using rstudio::session::modules::source_control::FileWithStatus;
+using rstudio::session::modules::source_control::VCSStatus;
+using rstudio::session::modules::source_control::StatusResult;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace git {
@@ -271,7 +272,7 @@ protected:
                       std::string* pStdErr=NULL,
                       int* pExitCode=NULL)
    {
-      using namespace core::system;
+      using namespace rstudio::core::system;
 
       ProcessResult result;
       Error error = gitExec(args, root_, &result);
@@ -1581,7 +1582,7 @@ Error vcsDiffFile(const json::JsonRpcRequest& request,
       error = systemError(boost::system::errc::file_too_large,
                           ERROR_LOCATION);
       pResponse->setError(error,
-                          json::Value(static_cast<uint64_t>(output.size())));
+                          json::Value(static_cast<boost::uint64_t>(output.size())));
    }
    else
    {
@@ -1756,7 +1757,8 @@ std::string githubUrl(const std::string& view,
    }
    else if (result.exitStatus != 0)
    {
-      LOG_ERROR_MESSAGE(result.stdErr);
+      if (!result.stdErr.empty())
+         LOG_ERROR_MESSAGE(result.stdErr);
       return std::string();
    }
 
@@ -1940,7 +1942,7 @@ Error vcsShow(const json::JsonRpcRequest& request,
       error = systemError(boost::system::errc::file_too_large,
                           ERROR_LOCATION);
       pResponse->setError(error,
-                          json::Value(static_cast<uint64_t>(output.size())));
+                          json::Value(static_cast<boost::uint64_t>(output.size())));
    }
    else
    {
@@ -2513,12 +2515,11 @@ Error augmentGitIgnore(const FilePath& gitIgnoreFile)
 
 FilePath whichGitExe()
 {
-   std::string whichGit;
-   Error error = r::exec::RFunction("Sys.which", "git").call(&whichGit);
-   if (error)
+   // find git
+   FilePath whichGit = module_context::findProgram("git");
+   if (whichGit.empty())
    {
-      LOG_ERROR(error);
-      return FilePath();
+      return whichGit;
    }
    else
    {
@@ -2527,13 +2528,13 @@ FilePath whichGitExe()
       if (module_context::isOSXMavericks())
       {
          if (module_context::hasOSXMavericksDeveloperTools())
-            return FilePath(whichGit);
+            return whichGit;
          else
             return FilePath();
       }
       else
       {
-         return FilePath(whichGit);
+         return whichGit;
       }
    }
 }
@@ -2585,7 +2586,6 @@ FilePath detectedGitExePath()
       }
       else
       {
-         LOG_ERROR(error);
          return FilePath();
       }
    }
@@ -2620,9 +2620,7 @@ void onUserSettingsChanged()
       // if we are relying on an auto-detected value then scan on windows
       // and reset to empty on posix
 #ifdef _WIN32
-      Error error = detectAndSaveGitExePath();
-      if (error)
-         LOG_ERROR(error);
+      detectAndSaveGitExePath();
 #else
       s_gitExePath = "";
 #endif
@@ -2855,3 +2853,4 @@ core::Error initialize()
 } // namespace git
 } // namespace modules
 } // namespace session
+} // namespace rstudio

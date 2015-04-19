@@ -39,8 +39,9 @@
 
 #include <session/projects/SessionProjects.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {
 
 namespace {
@@ -125,7 +126,7 @@ private:
 
    void start(const std::string& title, const FilePath& htmlFile, bool allowUpdate)
    {
-      using namespace core::string_utils;
+      using namespace rstudio::core::string_utils;
       using namespace module_context;
 
       htmlFile_ = htmlFile;
@@ -385,6 +386,10 @@ Error rpubsUpload(const json::JsonRpcRequest& request,
    }
    else
    {
+      // provide a default title if necessary
+      if (title.empty())
+         title = "Untitled";
+
       FilePath filePath = module_context::resolveAliasedPath(htmlFile);
       s_pCurrentUploads[contextId] = RPubsUpload::create(contextId,
                                                          title,
@@ -442,4 +447,5 @@ std::string previousRpubsUploadId(const FilePath& filePath)
 } // namespace module_context
 
 } // namesapce session
+} // namespace rstudio
 

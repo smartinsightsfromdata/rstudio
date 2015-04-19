@@ -25,8 +25,9 @@
 #include <session/SessionOptions.hpp>
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace shiny {
@@ -92,7 +93,14 @@ std::string onDetectShinySourceType(
       {
          return kShinyType;
       }
-      else if (filePath.extensionLowerCase() == ".r" &&
+      else if (boost::algorithm::iequals(filename, "app.r") && 
+               boost::algorithm::icontains(pDoc->contents(), "shinyApp"))
+      {
+         return kShinyType;
+      }
+      else if ((boost::algorithm::iequals(filename, "global.r") ||
+                boost::algorithm::iequals(filename, "ui.r") ||
+                boost::algorithm::iequals(filename, "server.r")) &&
                isShinyAppDir(filePath.parent()))
       {
          return kShinyType;
@@ -121,10 +129,7 @@ Error initialize()
    using namespace module_context;
    events().onPackageLoaded.connect(onPackageLoaded);
 
-   // run app features require shiny v0.8 (the version where the
-   // shiny.launch.browser option can be a function)
-   if (module_context::isPackageVersionInstalled("shiny", "0.8"))
-      events().onDetectSourceExtendedType.connect(onDetectShinySourceType);
+   events().onDetectSourceExtendedType.connect(onDetectShinySourceType);
 
    ExecBlock initBlock;
    initBlock.addFunctions()
@@ -137,4 +142,5 @@ Error initialize()
 } // namespace crypto
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

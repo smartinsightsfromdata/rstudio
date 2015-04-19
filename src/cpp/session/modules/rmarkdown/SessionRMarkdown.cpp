@@ -50,8 +50,9 @@
 
 #define kShinyContentWarning "Warning: Shiny application in a static R Markdown document"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace rmarkdown {
@@ -65,6 +66,15 @@ enum RenderTerminateType
    renderTerminateAbnormal,
    renderTerminateQuiet
 };
+
+// s_renderOutputs is a rotating buffer that maps an output identifier to a
+// target location on disk, to give the client access to the last few renders
+// that occurred in this session. it's unlikely that the client will ever 
+// request a render output other than the one that was just completed, so 
+// keeping > 2 render paths is conservative.
+#define kMaxRenderOutputs 5
+std::string s_renderOutputs[kMaxRenderOutputs];
+int s_currentRenderOutput = 0;
 
 class RenderRmd : public async_r::AsyncRProcess
 {
@@ -165,14 +175,15 @@ private:
       }
 
       std::string extraParams;
-      std::string targetFile(targetFile_.filename());
+      std::string targetFile =
+              string_utils::utf8ToSystem(targetFile_.absolutePath());
 
       std::string renderOptions("encoding = '" + encoding + "'");
 
       // output to a specific format if specified
       if (!format.empty())
       {
-         renderOptions += ", output_format = rmarkdown::" + format + "()";
+         renderOptions += ", output_format = '" + format + "'";
       }
 
       // output to a temporary directory if specified (no need to do this
@@ -196,21 +207,48 @@ private:
       {
          extraParams += "shiny_args = list(launch.browser = FALSE), "
                         "auto_reload = FALSE, ";
-         extraParams += "dir = '" + targetFile_.parent().absolutePath() + "', ";
+         extraParams += "dir = '" + string_utils::utf8ToSystem(
+                     targetFile_.parent().absolutePath()) + "', ";
+
+         std::string rsIFramePath("rsiframe.js");
+
+#ifndef __APPLE__
+         // on Qt platforms, rsiframe.js needs to have its origin specified
+         // explicitly; Qt 5.4 disables document.referrer
+         if (session::options().programMode() == kSessionProgramModeDesktop)
+         {
+             rsIFramePath += "?origin=" +
+                     session::options().wwwAddress() + ":" +
+                     session::options().wwwPort();
+         }
+#endif
+
+         std::string extraDependencies("htmltools::htmlDependency("
+                     "name = 'rstudio-iframe', "
+                     "version = '0.1', "
+                     "src = '" +
+                         session::options().rResourcesPath().absolutePath() +
+                     "', "
+                     "script = '" + rsIFramePath + "')");
+
+         std::string outputOptions("extra_dependencies = list(" + 
+               extraDependencies + ")");
+
+#ifndef __APPLE__
+         // on Qt platforms, use local MathJax: it contains a patch that allows
+         // math to render immediately (otherwise it fails to load due to 
+         // timeouts waiting for font variants to load)
+         if (session::options().programMode() == kSessionProgramModeDesktop) 
+         {
+            outputOptions += ", mathjax = 'local'";
+         }
+#endif
 
          // inject the RStudio IFrame helper script (for syncing scroll position
          // and anchor information cross-domain), and wrap the other render
          // options discovered so far in the render_args parameter
          renderOptions = "render_args = list(" + renderOptions + ", "
-               "output_options = list(extra_dependencies = "
-                  "list(structure(list("
-                        "name = 'rstudio-iframe', "
-                        "version = '0.1', "
-                        "path = '" +
-                            session::options().rResourcesPath().absolutePath() +
-                        "', "
-                        "script = 'rsiframe.js'), "
-                     "class = 'html_dependency'))))";
+               "output_options = list(" + outputOptions + "))";
       }
 
       // render command
@@ -223,7 +261,8 @@ private:
 
       // start the async R process with the render command
       allOutput_.clear();
-      async_r::AsyncRProcess::start(cmd.c_str(), targetFile_.parent());
+      async_r::AsyncRProcess::start(cmd.c_str(), targetFile_.parent(),
+                                    async_r::R_PROCESS_NO_RDATA);
    }
 
    void onStdout(const std::string& output)
@@ -336,6 +375,8 @@ private:
 
    void terminate(bool succeeded)
    {
+      using namespace module_context;
+
       markCompleted();
 
       // if a quiet terminate was requested, don't queue any client events
@@ -344,30 +385,22 @@ private:
 
       json::Object resultJson;
       resultJson["succeeded"] = succeeded;
-      resultJson["target_file"] =
-            module_context::createAliasedPath(targetFile_);
+      resultJson["target_file"] = createAliasedPath(targetFile_);
       resultJson["target_encoding"] = encoding_;
       resultJson["target_line"] = sourceLine_;
 
-      std::string outputFile = module_context::createAliasedPath(outputFile_);
+      std::string outputFile = createAliasedPath(outputFile_);
       resultJson["output_file"] = outputFile;
-      resultJson["knitr_errors"] = build::compileErrorsAsJson(knitrErrors_);
+      resultJson["knitr_errors"] = sourceMarkersAsJson(knitrErrors_);
 
-      // A component of the output URL is the full (aliased) path of the output
-      // file, on which the renderer bases requests. This path is a URL
-      // component (see notes in handleRmdOutputRequest) and thus needs to
-      // arrive URL-escaped.
       std::string outputUrl(kRmdOutput "/");
-      std::string encodedOutputFile =
-                       http::util::urlEncode(
-                       http::util::urlEncode(outputFile, false), false);
-#ifndef __APPLE__
-      // on the desktop (except Cocoa) we need to make another escaping pass
-      if (session::options().programMode() == kSessionProgramModeDesktop)
-         encodedOutputFile = http::util::urlEncode(encodedOutputFile, false);
-#endif
-      outputUrl.append(encodedOutputFile);
+
+      // assign the result to one of our output slots
+      s_currentRenderOutput = (s_currentRenderOutput + 1) % kMaxRenderOutputs;
+      s_renderOutputs[s_currentRenderOutput] = outputFile;
+      outputUrl.append(boost::lexical_cast<std::string>(s_currentRenderOutput));
       outputUrl.append("/");
+
       resultJson["output_url"] = outputUrl;
 
       resultJson["output_format"] = outputFormat_;
@@ -415,16 +448,6 @@ private:
             "  Mac OS X: TexLive 2013 (Full) - http://tug.org/mactex/\n"
             "  (NOTE: Download with Safari rather than Chrome _strongly_ recommended)\n\n"
             "  Linux: Use system package manager\n\n");
-      }
-
-      if (isShiny_ && !canRenderShinyDocs())
-      {
-         enqueRenderOutput(module_context::kCompileOutputError,
-            "\n"
-            "The development versions of knitr and shiny are required to\n"
-            "render Shiny documents. You can install them using devtools\n"
-            "as follows:\n\n"
-            "devtools::install_github(c(\"yihui/knitr\",\"rstudio/shiny\"))\n\n");
       }
    }
 
@@ -485,12 +508,12 @@ private:
          {
             // looks like a knitr error; compose a compile error object and
             // emit it to the client when the render is complete
-            build::CompileError err(
-                     build::CompileError::Error,
+            SourceMarker err(
+                     SourceMarker::Error,
                      targetFile_.parent().complete(matches[3].str()),
                      boost::lexical_cast<int>(matches[1].str()),
                      1,
-                     matches[4].str(),
+                     core::html_utils::HTML(matches[4].str()),
                      true);
             knitrErrors_.push_back(err);
          }
@@ -510,7 +533,7 @@ private:
    std::string encoding_;
    bool sourceNavigation_;
    json::Object outputFormat_;
-   std::vector<build::CompileError> knitrErrors_;
+   std::vector<module_context::SourceMarker> knitrErrors_;
    std::string allOutput_;
 };
 
@@ -527,7 +550,8 @@ public:
    static boost::shared_ptr<DiscoverTemplates> create()
    {
       boost::shared_ptr<DiscoverTemplates> pDiscover(new DiscoverTemplates());
-      pDiscover->start("rmarkdown:::list_template_dirs()", FilePath());
+      pDiscover->start("rmarkdown:::list_template_dirs()", FilePath(),
+                       async_r::R_PROCESS_VANILLA);
       return pDiscover;
    }
 
@@ -649,14 +673,14 @@ private:
       {
          // we found the start of the MathJax section; add the MathJax config
          // block if we're in a configuration that requires it
-#ifdef __APPLE__
-         return match[0];
-#else
+#if defined(_WIN32)
          if (session::options().programMode() != kSessionProgramModeDesktop)
             return match[0];
 
          result.append(kQtMathJaxConfigScript "\n");
          result.append(match[0]);
+#else
+         return match[0];
 #endif
       }
       else if (hasMathjax_)
@@ -679,11 +703,14 @@ bool isRenderRunning()
    return s_pCurrentRender_ && s_pCurrentRender_->isRunning();
 }
 
-void initPandocPath()
+
+void initEnvironment()
 {
    r::exec::RFunction sysSetenv("Sys.setenv");
    sysSetenv.addParam("RSTUDIO_PANDOC",
                       session::options().pandocPath().absolutePath());
+   sysSetenv.addParam("RMARKDOWN_MATHJAX_PATH",
+                      session::options().mathjaxPath().absolutePath());
    Error error = sysSetenv.call();
    if (error)
       LOG_ERROR(error);
@@ -729,9 +756,7 @@ Error getRMarkdownContext(const json::JsonRpcRequest&,
                           json::JsonRpcResponse* pResponse)
 {
    json::Object contextJson;
-   contextJson["can_render_shiny_docs"] = canRenderShinyDocs();
    pResponse->setResult(contextJson);
-
    return Success();
 }
 
@@ -822,25 +847,10 @@ Error terminateRenderRmd(const json::JsonRpcRequest& request,
    return Success();
 }
 
-// return the path to the local copy of MathJax installed with the RMarkdown
-// package
+// return the path to the local copy of MathJax
 FilePath mathJaxDirectory()
 {
-   std::string path;
-   FilePath mathJaxDir;
-
-   // call system.file to find the appropriate path
-   r::exec::RFunction findMathJax("system.file", "rmd/h/m");
-   findMathJax.addParam("package", "rmarkdown");
-   Error error = findMathJax.call(&path);
-
-   // we don't expect this to fail since we shouldn't be here if RMarkdown
-   // is not installed at the correct verwion
-   if (error)
-      LOG_ERROR(error);
-   else
-      mathJaxDir = FilePath(path);
-   return mathJaxDir;
+   return session::options().mathjaxPath();
 }
 
 // Handles a request for RMarkdown output. This request embeds the name of
@@ -857,22 +867,36 @@ void handleRmdOutputRequest(const http::Request& request,
    std::string path = http::util::pathAfterPrefix(request,
                                                   kRmdOutputLocation);
 
-   // Read the desired output file name from the URL
+   // find the portion of the URL containing the output identifier
    size_t pos = path.find('/', 1);
    if (pos == std::string::npos)
    {
-      pResponse->setError(http::status::NotFound, "No output file found");
-      return;
-   }
-   std::string outputFile = http::util::urlDecode(path.substr(0, pos));
-   FilePath outputFilePath(module_context::resolveAliasedPath(outputFile));
-   if (!outputFilePath.exists())
-   {
-      pResponse->setError(http::status::NotFound, outputFile + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
-   // Strip the output file name from the URL
+   // extract the output identifier
+   int outputId = 0;
+   try
+   {
+      outputId = boost::lexical_cast<int>(path.substr(0, pos));
+   }
+   catch (boost::bad_lexical_cast const&)
+   {
+      pResponse->setNotFoundError(request.uri());
+      return ;
+   }
+
+   // make sure the output identifier refers to a valid file
+   std::string outputFile = s_renderOutputs[outputId];
+   FilePath outputFilePath(module_context::resolveAliasedPath(outputFile));
+   if (!outputFilePath.exists())
+   {
+      pResponse->setNotFoundError(outputFile);
+      return;
+   }
+
+   // strip the output identifier from the URL
    path = path.substr(pos + 1, path.length());
 
    if (path.empty())
@@ -885,6 +909,10 @@ void handleRmdOutputRequest(const http::Request& request,
       // own resource handler
       MathjaxFilter mathjaxFilter;
       pResponse->setFile(outputFilePath, request, mathjaxFilter);
+
+      // set the content-type to ensure UTF-8 (all pandoc output
+      // is UTF-8 encoded)
+      pResponse->setContentType("text/html; charset=utf-8");
    }
    else if (boost::algorithm::starts_with(path, kMathjaxSegment))
    {
@@ -899,7 +927,15 @@ void handleRmdOutputRequest(const http::Request& request,
       // serve a file resource from the output folder
       FilePath filePath = outputFilePath.parent().childPath(path);
       html_preview::addFileSpecificHeaders(filePath, pResponse);
-      pResponse->setCacheableFile(filePath, request);
+      if (session::options().programMode() == kSessionProgramModeDesktop)
+      {
+         pResponse->setNoCacheHeaders();
+         pResponse->setFile(filePath, request);
+      }
+      else
+      {
+         pResponse->setCacheableFile(filePath, request);
+      }
    }
 }
 
@@ -978,21 +1014,11 @@ Error getRmdTemplate(const json::JsonRpcRequest& request,
 
 } // anonymous namespace
 
-bool canRenderShinyDocs()
-{
-   return module_context::isPackageVersionInstalled("shiny", "0.9.1.9008") &&
-          module_context::isPackageVersionInstalled("knitr", "1.5.33");
-}
-
 bool rmarkdownPackageAvailable()
 {
    if (!haveMarkdownToHTMLOption())
    {
-#ifdef _WIN32
       return r::util::hasRequiredVersion("3.0");
-#else
-      return r::util::hasRequiredVersion("2.14.1");
-#endif
    }
    else
    {
@@ -1005,7 +1031,7 @@ Error initialize()
    using boost::bind;
    using namespace module_context;
 
-   initPandocPath();
+   initEnvironment();
 
    module_context::events().onDetectSourceExtendedType
                                         .connect(onDetectRmdSourceType);
@@ -1029,4 +1055,5 @@ Error initialize()
 } // namespace rmarkdown
 } // namespace modules
 } // namespace session
+} // namespace rstudio
 

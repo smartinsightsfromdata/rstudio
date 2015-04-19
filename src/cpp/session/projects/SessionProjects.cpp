@@ -21,18 +21,21 @@
 #include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
 #include <core/r_util/RProjectFile.hpp>
+#include <core/r_util/RSessionContext.hpp>
 
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionUserSettings.hpp>
 
 #include <r/RExec.hpp>
+#include <r/RRoutines.hpp>
 #include <r/session/RSessionUtils.hpp>
 
 #include "SessionProjectFirstRun.hpp"
 #include "SessionProjectsInternal.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace projects {
 
@@ -59,6 +62,11 @@ Error getNewProjectContext(const json::JsonRpcRequest& request,
    json::Object contextJson;
 
    contextJson["rcpp_available"] = module_context::isPackageInstalled("Rcpp");
+   contextJson["packrat_available"] =
+         module_context::packratContext().available &&
+         module_context::canBuildCpp();
+   contextJson["working_directory"] = module_context::createAliasedPath(
+         r::session::utils::safeCurrentPath());
 
    pResponse->setResult(contextJson);
 
@@ -70,7 +78,8 @@ Error createProject(const json::JsonRpcRequest& request,
 {
    // read params
    std::string projectFile;
-   json::Value newPackageJson, newShinyAppJson;
+   json::Value newPackageJson;
+   json::Value newShinyAppJson;
    Error error = json::readParams(request.params,
                                   &projectFile,
                                   &newPackageJson,
@@ -79,112 +88,7 @@ Error createProject(const json::JsonRpcRequest& request,
       return error;
    FilePath projectFilePath = module_context::resolveAliasedPath(projectFile);
 
-   // package project
-   if (!newPackageJson.is_null())
-   {
-      // build list of code files
-      bool usingRcpp;
-      json::Array codeFilesJson;
-      Error error = json::readObject(newPackageJson.get_obj(),
-                                     "using_rcpp", &usingRcpp,
-                                     "code_files", &codeFilesJson);
-      if (error)
-         return error;
-      std::vector<FilePath> codeFiles;
-      BOOST_FOREACH(const json::Value codeFile, codeFilesJson)
-      {
-         if (!json::isType<std::string>(codeFile))
-         {
-            BOOST_ASSERT(false);
-            continue;
-         }
-
-         FilePath codeFilePath =
-                     module_context::resolveAliasedPath(codeFile.get_str());
-         codeFiles.push_back(codeFilePath);
-      }
-
-      // error if the package dir already exists
-      FilePath packageDir = projectFilePath.parent();
-      if (packageDir.exists())
-         return core::fileExistsError(ERROR_LOCATION);
-
-      // create a temp dir (so we can import the list of code files)
-      FilePath tempDir = module_context::tempFile("newpkg", "dir");
-      error = tempDir.ensureDirectory();
-      if (error)
-         return error;
-
-      // copy the code files into the tempDir and build up a
-      // list of the filenames for passing to package.skeleton
-      std::vector<std::string> rFileNames, cppFileNames;
-      BOOST_FOREACH(const FilePath& codeFilePath, codeFiles)
-      {
-         FilePath targetPath = tempDir.complete(codeFilePath.filename());
-         Error error = codeFilePath.copy(targetPath);
-         if (error)
-            return error;
-
-         std::string ext = targetPath.extensionLowerCase();
-         std::string file = string_utils::utf8ToSystem(targetPath.filename());
-         if (boost::algorithm::starts_with(ext,".c"))
-            cppFileNames.push_back(file);
-         else
-            rFileNames.push_back(file);
-      }
-
-
-      // if the list of code files is empty then add an empty file
-      // with the same name as the package (but don't do this for
-      // Rcpp since it generates a hello world file)
-      if (codeFiles.empty() && !usingRcpp)
-      {
-         std::string srcFileName = packageDir.filename() + ".R";
-         FilePath srcFilePath = tempDir.complete(srcFileName);
-         Error error = core::writeStringToFile(srcFilePath, "");
-         if (error)
-            return error;
-         rFileNames.push_back(string_utils::utf8ToSystem(srcFileName));
-      }
-
-      // temporarily switch to the tempDir for package creation
-      RestoreCurrentPathScope pathScope(module_context::safeCurrentPath());
-      tempDir.makeCurrentPath();
-
-      // call package.skeleton
-
-      r::exec::RFunction pkgSkeleton(usingRcpp ?
-                                       "Rcpp:::Rcpp.package.skeleton" :
-                                       "utils:::package.skeleton");
-      pkgSkeleton.addParam("name",
-                           string_utils::utf8ToSystem(packageDir.filename()));
-      pkgSkeleton.addParam("path",
-               string_utils::utf8ToSystem(packageDir.parent().absolutePath()));
-      pkgSkeleton.addParam("code_files", rFileNames);
-      if (usingRcpp && module_context::haveRcppAttributes())
-      {
-         if (!cppFileNames.empty())
-         {
-            pkgSkeleton.addParam("example_code", false);
-            pkgSkeleton.addParam("cpp_files", cppFileNames);
-         }
-         else
-         {
-            pkgSkeleton.addParam("attributes", true);
-         }
-      }
-      error = pkgSkeleton.call();
-      if (error)
-         return error;
-
-      // create the project file (allow auto-detection of the package
-      // to setup the package build type & default options)
-      return r_util::writeProjectFile(projectFilePath,
-                                      ProjectContext::buildDefaults(),
-                                      ProjectContext::defaultConfig());
-   }
-
-   else if (!newShinyAppJson.is_null())
+   if (!newShinyAppJson.is_null())
    {
       // error if the shiny app dir already exists
       FilePath appDir = projectFilePath.parent();
@@ -249,6 +153,10 @@ json::Object projectConfigJson(const r_util::RProjectConfig& config)
 {
    json::Object configJson;
    configJson["version"] = config.version;
+   json::Object rVersionJson;
+   rVersionJson["number"] = config.rVersion.number;
+   rVersionJson["arch"] = config.rVersion.arch;
+   configJson["r_version"] = rVersionJson;
    configJson["restore_workspace"] = config.restoreWorkspace;
    configJson["save_workspace"] = config.saveWorkspace;
    configJson["always_save_history"] = config.alwaysSaveHistory;
@@ -327,11 +235,10 @@ json::Object projectVcsContextJson()
 
 json::Object projectBuildContextJson()
 {
+   using namespace module_context;
    json::Object contextJson;
-   contextJson["roxygen2_installed"] =
-                        module_context::isPackageInstalled("roxygen2");
-   contextJson["devtools_installed"] =
-                           module_context::isPackageInstalled("devtools");
+   contextJson["roxygen2_installed"] = isMinimumRoxygenInstalled();
+   contextJson["devtools_installed"] = isMinimumDevtoolsInstalled();
    return contextJson;
 }
 
@@ -348,6 +255,8 @@ Error readProjectOptions(const json::JsonRpcRequest& request,
    optionsJson["vcs_context"] = projectVcsContextJson();
    optionsJson["build_options"] = projectBuildOptionsJson();
    optionsJson["build_context"] = projectBuildContextJson();
+   optionsJson["packrat_options"] = module_context::packratOptionsAsJson();
+   optionsJson["packrat_context"] = module_context::packratContextAsJson();
 
    pResponse->setResult(optionsJson);
    return Success();
@@ -438,6 +347,17 @@ Error writeProjectOptions(const json::JsonRpcRequest& request,
                     "makefile_path", &(config.makefilePath),
                     "custom_script_path", &(config.customScriptPath),
                     "tutorial_path", &(config.tutorialPath));
+   if (error)
+      return error;
+
+   // read the r version info
+   json::Object rVersionJson;
+   error = json::readObject(configJson, "r_version", &rVersionJson);
+   if (error)
+      return error;
+   error = json::readObject(rVersionJson,
+                            "number", &(config.rVersion.number),
+                            "arch", &(config.rVersion.arch));
    if (error)
       return error;
 
@@ -557,6 +477,9 @@ void onMonitoringDisabled()
 }  // anonymous namespace
 
 
+// Note that the logic here needs to be synchronized with the logic in
+// core::r_util::RSessionContext::nextSessionWorkingDir (so that both
+// reach the same conclusion about what the next working directory is)
 void startup()
 {
    // register suspend handler
@@ -583,9 +506,13 @@ void startup()
       session::options().clearInitialContextSettings();
 
       // check for special "none" value (used for close project)
-      if (nextSessionProject == "none")
+      if (nextSessionProject == kNextSessionProjectNone)
       {
          projectFilePath = FilePath();
+
+         // flush the last project path so restarts won't put us back into
+         // project context (see case 4015)
+         s_projectContext.setLastProjectPath(FilePath());
       }
       else
       {
@@ -652,8 +579,45 @@ void startup()
    }
 }
 
+SEXP rs_writeProjectFile(SEXP projectFilePathSEXP)
+{
+   std::string absolutePath = r::sexp::asString(projectFilePathSEXP);
+   FilePath projectFilePath(absolutePath);
+   
+   Error error = r_util::writeProjectFile(
+            projectFilePath,
+            ProjectContext::buildDefaults(),
+            ProjectContext::defaultConfig());
+   
+   r::sexp::Protect protect;
+   return error ?
+            r::sexp::create(false, &protect) :
+            r::sexp::create(true, &protect);
+}
+
+SEXP rs_addFirstRunDoc(SEXP projectFileAbsolutePathSEXP, SEXP docRelativePathSEXP)
+{
+   std::string projectFileAbsolutePath = r::sexp::asString(projectFileAbsolutePathSEXP);
+   const FilePath projectFilePath(projectFileAbsolutePath);
+   
+   std::string docRelativePath = r::sexp::asString(docRelativePathSEXP);
+   
+   addFirstRunDoc(projectFilePath, docRelativePath);
+   return R_NilValue;
+}
+
 Error initialize()
 {
+   r::routines::registerCallMethod(
+            "rs_writeProjectFile",
+            (DL_FUNC) rs_writeProjectFile,
+            1);
+   
+   r::routines::registerCallMethod(
+            "rs_addFirstRunDoc",
+            (DL_FUNC) rs_addFirstRunDoc,
+            2);
+   
    // call project-context initialize
    Error error = s_projectContext.initialize();
    if (error)
@@ -688,4 +652,5 @@ ProjectContext& projectContext()
 
 } // namespace projects
 } // namesapce session
+} // namespace rstudio
 

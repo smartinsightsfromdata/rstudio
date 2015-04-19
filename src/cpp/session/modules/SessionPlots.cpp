@@ -40,8 +40,9 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {
 namespace plots {
@@ -136,7 +137,7 @@ Error savePlotAs(const json::JsonRpcRequest& request,
    }
 
    // save plot
-   using namespace r::session::graphics;
+   using namespace rstudio::r::session::graphics;
    Display& display = r::session::graphics::display();
    error = display.savePlotAsImage(plotPath, format, width, height);
    if (error)
@@ -179,7 +180,7 @@ Error savePlotAsPdf(const json::JsonRpcRequest& request,
    }
 
    // save plot
-   using namespace r::session::graphics;
+   using namespace rstudio::r::session::graphics;
    Display& display = r::session::graphics::display();
    error = display.savePlotAsPdf(plotPath, width, height, useCairoPdf);
    if (error)
@@ -208,7 +209,7 @@ Error copyPlotToClipboardMetafile(const json::JsonRpcRequest& request,
    FilePath targetFile = module_context::tempFile("clipboard", "emf");
 
    // save as metafile
-   using namespace r::session::graphics;
+   using namespace rstudio::r::session::graphics;
    Display& display = r::session::graphics::display();
    error = display.savePlotAsMetafile(targetFile, width, height);
    if (error)
@@ -246,7 +247,7 @@ Error copyPlotToCocoaPasteboard(const json::JsonRpcRequest& request,
    FilePath targetFile = module_context::tempFile("clipboard", "png");
 
    // save as png
-   using namespace r::session::graphics;
+   using namespace rstudio::r::session::graphics;
    Display& display = r::session::graphics::display();
    error = display.savePlotAsImage(targetFile, "png", width, height);
    if (error)
@@ -269,50 +270,82 @@ Error copyPlotToCocoaPasteboard(const json::JsonRpcRequest& request,
 #endif
 }
 
-bool hasStem(const FilePath& filePath, const std::string& stem)
-{
-   return filePath.stem() == stem;
-}
 
-json::Object plotExportFormat(const std::string& name,
-                              const std::string& extension)
+Error plotsCreateRPubsHtml(const json::JsonRpcRequest& request,
+                            json::JsonRpcResponse* pResponse)
 {
-   json::Object formatJson;
-   formatJson["name"] = name;
-   formatJson["extension"] = extension;
-   return formatJson;
-}
-
-Error uniqueSavePlotStem(const FilePath& directoryPath, std::string* pStem)
-{
-   // determine unique file name
-   std::vector<FilePath> children;
-   Error error = directoryPath.children(&children);
+   // get params
+   std::string title, comment;
+   int width, height;
+   Error error = json::readParams(request.params,
+                                  &title,
+                                  &comment,
+                                  &width,
+                                  &height);
    if (error)
       return error;
 
-   // search for unique stem
-   int i = 0;
-   *pStem = "Rplot";
-   while(true)
-   {
-      // seek stem
-      std::vector<FilePath>::const_iterator it = std::find_if(
-                                                children.begin(),
-                                                children.end(),
-                                                boost::bind(hasStem, _1, *pStem));
-      // break if not found
-      if (it == children.end())
-         break;
+   // create a temp directory to work in
+   FilePath tempPath = module_context::tempFile("plots-rpubs", "dir");
+   error = tempPath.ensureDirectory();
+   if (error)
+      return error;
 
-      // update stem and search again
-      boost::format fmt("Rplot%1%");
-      *pStem = boost::str(fmt % boost::io::group(std::setfill('0'),
-                                                 std::setw(2),
-                                                 ++i));
+   // form various other paths
+   FilePath sourceFilePath = tempPath.childPath("source.html");
+   FilePath targetFilePath = tempPath.childPath("target.html");
+   FilePath plotPath = tempPath.childPath("plot.png");
+
+   // save plot
+   using namespace rstudio::r::session::graphics;
+   Display& display = r::session::graphics::display();
+   error = display.savePlotAsImage(plotPath, "png", width, height);
+   if (error)
+   {
+       LOG_ERROR(error);
+       return error;
    }
 
+   // generate source file
+   boost::format fmt(
+       "<!DOCTYPE html PUBLIC \"-//W3C//DTD HTML 4.01//EN\" \n"
+            "\"http://www.w3.org/TR/html4/strict.dtd\">\n"
+       "<html lang=\"en\">\n"
+       "<head>\n"
+       "  <meta http-equiv=\"content-type\" content=\"text/html; charset=utf-8\">\n"
+       "</head>\n"
+       "<body style=\"background-color: white;"
+                     "font-family: 'Helvetica Neue', Helvetica, Arial, sans-serif;\">\n"
+       "  <div style=\"width: %1%px; margin-left: auto; margin-right: auto;\">\n"
+       "    <img src=\"%2%\"/>\n"
+       "  </div>\n"
+       "</body>\n"
+       "</html>\n");
+   std::string html = boost::str(fmt % width % plotPath.filename());
+   error = core::writeStringToFile(sourceFilePath, html);
+   if (error)
+      return error;
+
+   // perform the base64 encode using pandoc
+   error = module_context::createSelfContainedHtml(sourceFilePath,
+                                                   targetFilePath);
+   if (error)
+      return error;
+
+   // return target path
+   pResponse->setResult(module_context::createAliasedPath(targetFilePath));
+
+   // return success
    return Success();
+}
+
+
+
+
+
+Error uniqueSavePlotStem(const FilePath& directoryPath, std::string* pStem)
+{
+   return module_context::uniqueSaveStem(directoryPath, "Rplot", pStem);
 }
 
 Error getUniqueSavePlotStem(const json::JsonRpcRequest& request,
@@ -358,7 +391,8 @@ Error getSavePlotContext(const json::JsonRpcRequest& request,
    json::Object contextJson;
 
    // get supported formats
-    using namespace r::session::graphics;
+   using namespace module_context;
+   using namespace rstudio::r::session::graphics;
    json::Array formats;
    formats.push_back(plotExportFormat("PNG", kPngFormat));
    formats.push_back(plotExportFormat("JPEG", kJpegFormat));
@@ -461,7 +495,7 @@ void setTemporaryFileResponse(const FilePath& filePath,
 
 void handleZoomRequest(const http::Request& request, http::Response* pResponse)
 {
-   using namespace r::session;
+   using namespace rstudio::r::session;
 
    // get the width and height parameters
    int width, height;
@@ -509,7 +543,7 @@ void handleZoomRequest(const http::Request& request, http::Response* pResponse)
             "</script>"
          "</head>"
          "<body style=\"margin: 0; overflow: hidden\">"
-            "<img id=\"plot\" src=\"plot_zoom_png?width=#width#&height=#height#\"/>"
+            "<img id=\"plot\" width=\"100%\" height=\"100%\" src=\"plot_zoom_png?width=#width#&height=#height#\"/>"
          "</body>"
       "</html>";
 
@@ -528,7 +562,7 @@ void handleZoomRequest(const http::Request& request, http::Response* pResponse)
 void handleZoomPngRequest(const http::Request& request,
                           http::Response* pResponse)
 {
-   using namespace r::session;
+   using namespace rstudio::r::session;
 
    // get the width and height parameters
    int width, height;
@@ -536,12 +570,13 @@ void handleZoomPngRequest(const http::Request& request,
      return ;
 
    // generate the file
-   using namespace r::session::graphics;
+   using namespace rstudio::r::session::graphics;
    FilePath imagePath = module_context::tempFile("plot", "png");
    Error saveError = graphics::display().savePlotAsImage(imagePath,
                                                          kPngFormat,
                                                          width,
-                                                         height);
+                                                         height,
+                                                         true);
    if (saveError)
    {
       pResponse->setError(http::status::InternalServerError, 
@@ -567,7 +602,7 @@ void handlePngRequest(const http::Request& request,
       return ;
 
    // generate the image
-   using namespace r::session;
+   using namespace rstudio::r::session;
    FilePath imagePath = module_context::tempFile("plot", "png");
    Error error = graphics::display().savePlotAsImage(imagePath,
                                                       graphics::kPngFormat,
@@ -612,13 +647,13 @@ void handleGraphicsRequest(const http::Request& request,
    {
       std::string errmsg = "invalid graphics uri: " + uri;
       LOG_ERROR_MESSAGE(errmsg);
-      pResponse->setError(http::status::NotFound, errmsg);
+      pResponse->setNotFoundError(request.uri());
       return ;
    }
    std::string filename = uri.substr(lastSlashPos+1);
  
    // calculate the path to the png
-   using namespace r::session;
+   using namespace rstudio::r::session;
    FilePath imagePath = graphics::display().imagePath(filename);
       
    // if it exists then return it
@@ -646,8 +681,7 @@ void handleGraphicsRequest(const http::Request& request,
       else
       {
          // not found error
-         pResponse->setError(http::status::NotFound, 
-                             request.uri() + " not found");
+         pResponse->setNotFoundError(request.uri());
       }
    }
 }
@@ -677,7 +711,7 @@ void enquePlotsChanged(const r::session::graphics::DisplayState& displayState,
    
 void renderGraphicsOutput(bool activatePlots, bool showManipulator)
 {
-   using namespace r::session;
+   using namespace rstudio::r::session;
    if (graphics::display().hasOutput())
    {
       graphics::display().render(
@@ -695,7 +729,7 @@ void onClientInit()
 void detectChanges(bool activatePlots)
 {
    // check for changes
-   using namespace r::session;
+   using namespace rstudio::r::session;
    if (graphics::display().hasChanges())
    {
       graphics::display().render(boost::bind(enquePlotsChanged,
@@ -713,7 +747,7 @@ void onDetectChanges(module_context::ChangeSource source)
 
 void onBackgroundProcessing(bool)
 {
-   using namespace r::session;
+   using namespace rstudio::r::session;
    if (graphics::display().isActiveDevice() && graphics::display().hasChanges())
    {
       // verify that the last change is more than 50ms old. the reason
@@ -753,7 +787,7 @@ Error setManipulatorValues(const json::JsonRpcRequest& request,
       return error;
 
    // set them
-   using namespace r::session;
+   using namespace rstudio::r::session;
    graphics::display().setPlotManipulatorValues(jsObject);
 
    // render
@@ -772,7 +806,7 @@ Error manipulatorPlotClicked(const json::JsonRpcRequest& request,
       return error;
 
    // notify the device
-   using namespace r::session;
+   using namespace rstudio::r::session;
    graphics::display().manipulatorPlotClicked(x, y);
 
    // render
@@ -817,7 +851,7 @@ Error initialize()
    module_context::events().onBackgroundProcessing.connect(onBackgroundProcessing);
 
    // connect to onShowManipulator
-   using namespace r::session;
+   using namespace rstudio::r::session;
    graphics::display().onShowManipulator().connect(bind(onShowManipulator));
    
    using namespace module_context;
@@ -832,6 +866,7 @@ Error initialize()
       (bind(registerRpcMethod, "save_plot_as_pdf", savePlotAsPdf))
       (bind(registerRpcMethod, "copy_plot_to_clipboard_metafile", copyPlotToClipboardMetafile))
       (bind(registerRpcMethod, "copy_plot_to_cocoa_pasteboard", copyPlotToCocoaPasteboard))
+      (bind(registerRpcMethod, "plots_create_rpubs_html", plotsCreateRPubsHtml))
       (bind(registerRpcMethod, "get_unique_save_plot_stem", getUniqueSavePlotStem))
       (bind(registerRpcMethod, "get_save_plot_context", getSavePlotContext))
       (bind(registerRpcMethod, "set_manipulator_values", setManipulatorValues))
@@ -846,4 +881,5 @@ Error initialize()
 } // namespace plots
 } // namespace modules   
 } // namespace session
+} // namespace rstudio
   

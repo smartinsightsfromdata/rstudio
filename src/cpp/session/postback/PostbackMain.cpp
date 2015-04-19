@@ -32,6 +32,7 @@
 #include <core/http/Request.hpp>
 #include <core/http/Response.hpp>
 #if !defined(_WIN32)
+#include <core/http/TcpIpBlockingClient.hpp>
 #include <core/http/LocalStreamBlockingClient.hpp>
 #else
 #include <core/http/NamedPipeBlockingClient.hpp>
@@ -44,7 +45,8 @@
 
 #include "PostbackOptions.hpp"
 
-using namespace core ;
+using namespace rstudio;
+using namespace rstudio::core;
 using namespace session::postback ;
 
 int exitFailure(const Error& error)
@@ -67,11 +69,18 @@ Error sendRequest(http::Request* pRequest, http::Response* pResponse)
                                   boost::posix_time::milliseconds(50)),
                             pResponse);
 #else
-   // determine stream path
-   std::string userIdentity = core::system::getenv(kRStudioUserIdentity);
-   FilePath streamPath = session::local_streams::streamPath(userIdentity);
-
-   return http::sendRequest(streamPath, *pRequest, pResponse);
+   std::string tcpipPort = core::system::getenv(kRSessionStandalonePortNumber);
+   if (!tcpipPort.empty())
+   {
+      return http::sendRequest("127.0.0.1", tcpipPort, *pRequest, pResponse);
+   }
+   else
+   {
+      // determine stream path
+      std::string userIdentity = core::system::getenv(kRStudioUserIdentity);
+      FilePath streamPath = session::local_streams::streamPath(userIdentity);
+      return http::sendRequest(streamPath, *pRequest, pResponse);
+   }
 #endif
 
 }

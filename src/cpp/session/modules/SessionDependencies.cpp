@@ -30,68 +30,14 @@
 
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionConsoleProcess.hpp>
+#include <session/projects/SessionProjects.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
-namespace modules {
-namespace dependencies {
 
 namespace {
-
-const int kCRANPackageDependency = 0;
-const int kEmbeddedPackageDependency = 1;
-
-struct Dependency
-{
-   Dependency() : type(0) {}
-
-   bool empty() const { return name.empty(); }
-
-   int type;
-   std::string name;
-   std::string version;
-};
-
-std::vector<Dependency> dependenciesFromJson(const json::Array& depsJson)
-{
-   std::vector<Dependency> deps;
-   BOOST_FOREACH(const json::Value& depJsonValue, depsJson)
-   {
-      if (json::isType<json::Object>(depJsonValue))
-      {
-         Dependency dep;
-         json::Object depJson = depJsonValue.get_obj();
-         Error error = json::readObject(depJson,
-                                        "type", &(dep.type),
-                                        "name", &(dep.name),
-                                        "version", &(dep.version));
-         if (!error)
-         {
-            deps.push_back(dep);
-         }
-         else
-         {
-            LOG_ERROR(error);
-         }
-      }
-   }
-   return deps;
-}
-
-json::Array dependenciesToJson(const std::vector<Dependency>& deps)
-{
-   json::Array depsJson;
-   BOOST_FOREACH(const Dependency& dep, deps)
-   {
-      json::Object depJson;
-      depJson["type"] = dep.type;
-      depJson["name"] = dep.name;
-      depJson["version"] = dep.version;
-      depsJson.push_back(depJson);
-   }
-   return depsJson;
-}
 
 struct EmbeddedPackage
 {
@@ -147,6 +93,88 @@ EmbeddedPackage embeddedPackageInfo(const std::string& name)
    return EmbeddedPackage();
 }
 
+} // anonymous namespace
+
+namespace modules {
+namespace dependencies {
+
+namespace {
+
+const int kCRANPackageDependency = 0;
+const int kEmbeddedPackageDependency = 1;
+
+struct Dependency
+{
+   Dependency() : type(0), versionSatisfied(true) {}
+
+   bool empty() const { return name.empty(); }
+
+   int type;
+   std::string name;
+   std::string version;
+   std::string availableVersion;
+   bool versionSatisfied;
+};
+
+std::string nameFromDep(const Dependency& dep)
+{
+   return dep.name;
+}
+
+std::vector<std::string> packageNames(const std::vector<Dependency> deps)
+{
+   std::vector<std::string> names;
+   std::transform(deps.begin(),
+                  deps.end(),
+                  std::back_inserter(names),
+                  nameFromDep);
+   return names;
+}
+
+std::vector<Dependency> dependenciesFromJson(const json::Array& depsJson)
+{
+   std::vector<Dependency> deps;
+   BOOST_FOREACH(const json::Value& depJsonValue, depsJson)
+   {
+      if (json::isType<json::Object>(depJsonValue))
+      {
+         Dependency dep;
+         json::Object depJson = depJsonValue.get_obj();
+         Error error = json::readObject(depJson,
+                                        "type", &(dep.type),
+                                        "name", &(dep.name),
+                                        "version", &(dep.version));
+         if (!error)
+         {
+            deps.push_back(dep);
+         }
+         else
+         {
+            LOG_ERROR(error);
+         }
+      }
+   }
+   return deps;
+}
+
+json::Array dependenciesToJson(const std::vector<Dependency>& deps)
+{
+   json::Array depsJson;
+   BOOST_FOREACH(const Dependency& dep, deps)
+   {
+      json::Object depJson;
+      depJson["type"] = dep.type;
+      depJson["name"] = dep.name;
+      depJson["version"] = dep.version;
+      depJson["available_version"] = dep.availableVersion;
+      depJson["version_satisfied"] = dep.versionSatisfied;
+      depsJson.push_back(depJson);
+   }
+   return depsJson;
+}
+
+
+
 bool embeddedPackageRequiresUpdate(const EmbeddedPackage& pkg)
 {
    // if this package came from the rstudio ide then check if it needs
@@ -176,9 +204,10 @@ void silentUpdateEmbeddedPackage(const EmbeddedPackage& pkg)
 Error unsatisfiedDependencies(const json::JsonRpcRequest& request,
                               json::JsonRpcResponse* pResponse)
 {
-   // get list of dependencies
+   // get list of dependencies and silentUpdate flag
    json::Array depsJson;
-   Error error = json::readParams(request.params, &depsJson);
+   bool silentUpdate;
+   Error error = json::readParams(request.params, &depsJson, &silentUpdate);
    if (error)
       return error;
    std::vector<Dependency> deps = dependenciesFromJson(depsJson);
@@ -186,13 +215,32 @@ Error unsatisfiedDependencies(const json::JsonRpcRequest& request,
    // build the list of unsatisifed dependencies
    using namespace module_context;
    std::vector<Dependency> unsatisfiedDeps;
-   BOOST_FOREACH(const Dependency& dep, deps)
+   BOOST_FOREACH(Dependency& dep, deps)
    {
       switch(dep.type)
       {
       case kCRANPackageDependency:
          if (!isPackageVersionInstalled(dep.name, dep.version))
          {
+            // presume package is available unless we can demonstrate otherwise
+            // (we don't want to block installation attempt unless we're
+            // reasonably confident it will not result in a viable version)
+            r::sexp::Protect protect;
+            SEXP versionInfo = R_NilValue;
+
+            // find the version that will be installed from CRAN
+            error = r::exec::RFunction(".rs.packageCRANVersionAvailable", 
+                  dep.name, dep.version).call(&versionInfo, &protect);
+            if (error) {
+               LOG_ERROR(error);
+            } else {
+               // if these fail, we'll fall back on defaults set above
+               r::sexp::getNamedListElement(versionInfo, "version", 
+                     &dep.availableVersion);
+               r::sexp::getNamedListElement(versionInfo, "satisfied", 
+                     &dep.versionSatisfied);
+            }
+
             unsatisfiedDeps.push_back(dep);
          }
          break;
@@ -205,22 +253,26 @@ Error unsatisfiedDependencies(const json::JsonRpcRequest& request,
          {
             unsatisfiedDeps.push_back(dep);
          }
-         // package installed was from IDE but is out of date -- silent update
-         else if (embeddedPackageRequiresUpdate(pkg))
+         // silent update if necessary (as long as we aren't packified)
+         else if (silentUpdate && !packratContext().packified)
          {
-            silentUpdateEmbeddedPackage(pkg);
-         }
-         // package installed wasn't from the IDE but is older than
-         // the version we currently have embedded -- silent update
-         else if (!isPackageVersionInstalled(pkg.name, pkg.version))
-         {
-            silentUpdateEmbeddedPackage(pkg);
-         }
-         else
-         {
-            // the only remaining case is a newer version of the package is
-            // already installed (e.g. directly from github). in this case
-            // we do nothing
+            // package installed was from IDE but is out of date
+            if (embeddedPackageRequiresUpdate(pkg))
+            {
+               silentUpdateEmbeddedPackage(pkg);
+            }
+            // package installed wasn't from the IDE but is older than
+            // the version we currently have embedded
+            else if (!isPackageVersionInstalled(pkg.name, pkg.version))
+            {
+               silentUpdateEmbeddedPackage(pkg);
+            }
+            else
+            {
+               // the only remaining case is a newer version of the package is
+               // already installed (e.g. directly from github). in this case
+               // we do nothing
+            }
          }
 
          break;
@@ -247,23 +299,22 @@ Error installDependencies(const json::JsonRpcRequest& request,
    if (error)
       return error;
 
+   // force unload as necessary
+   std::vector<std::string> names = packageNames(deps);
+   error = r::exec::RFunction(".rs.forceUnloadForPackageInstall", names).call();
+   if (error)
+      LOG_ERROR(error);
+
    // R binary
    FilePath rProgramPath;
    error = module_context::rScriptPath(&rProgramPath);
    if (error)
       return error;
 
-   // options/environment
+   // options
    core::system::ProcessOptions options;
    options.terminateChildren = true;
    options.redirectStdErrToStdOut = true;
-   core::system::Options childEnv;
-   core::system::environment(&childEnv);
-   // allow child process to inherit our R_LIBS
-   std::string libPaths = module_context::libPathsString();
-   if (!libPaths.empty())
-      core::system::setenv(&childEnv, "R_LIBS", libPaths);
-   options.environment = childEnv;
 
    // build lists of cran packages and archives
    std::vector<std::string> cranPackages;
@@ -302,8 +353,25 @@ Error installDependencies(const json::JsonRpcRequest& request,
    // build args
    std::vector<std::string> args;
    args.push_back("--slave");
-   args.push_back("--no-save");
-   args.push_back("--no-restore");
+
+   // for packrat projects we execute the profile and set the working
+   // directory to the project directory; for other contexts we just
+   // propagate the R_LIBS
+   if (module_context::packratContext().modeOn)
+   {
+      options.workingDir = projects::projectContext().directory();
+   }
+   else
+   {
+      args.push_back("--vanilla");
+      core::system::Options childEnv;
+      core::system::environment(&childEnv);
+      std::string libPaths = module_context::libPathsString();
+      if (!libPaths.empty())
+         core::system::setenv(&childEnv, "R_LIBS", libPaths);
+      options.environment = childEnv;
+   }
+
    args.push_back("-e");
    args.push_back(cmd);
 
@@ -324,7 +392,8 @@ Error installDependencies(const json::JsonRpcRequest& request,
 
 
 } // anonymous namespace
- 
+
+
 Error initialize()
 {         
    // install handlers
@@ -340,5 +409,17 @@ Error initialize()
 
 } // namepsace dependencies
 } // namespace modules
+
+namespace module_context {
+
+Error installEmbeddedPackage(const std::string& name)
+{
+   EmbeddedPackage pkg = embeddedPackageInfo(name);
+   return module_context::installPackage(pkg.archivePath);
+}
+
+} // anonymous namespace
+
 } // namesapce session
+} // namespace rstudio
 

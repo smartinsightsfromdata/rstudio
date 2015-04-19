@@ -13,13 +13,17 @@
  *
  */
 
+#define RSTUDIO_ENABLE_DEBUG_MACROS
+
 #include <core/r_util/RTokenizer.hpp>
 
 #include <iostream>
 
-#include <boost/assert.hpp>
 #include <boost/foreach.hpp>
 
+#include <tests/TestThat.hpp>
+
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -51,10 +55,13 @@ public:
       {
          if (t.offset() == prefix_.length())
          {
-            std::wcout << value << std::endl;
-            BOOST_ASSERT(tokenType == t.type());
-            BOOST_ASSERT(value.length() == t.length());
-            BOOST_ASSERT(value == t.content());
+            if (tokenType != t.type())
+            {
+               std::wcerr << value << L" : " << t.content() << std::endl;
+            }
+            expect_true(tokenType == t.type());
+            expect_true(value.length() == t.length());
+            expect_true(value == t.content());
             return ;
          }
       }
@@ -83,7 +90,7 @@ private:
 void testVoid()
 {
    RTokenizer rt(L"") ;
-   BOOST_ASSERT(!rt.nextToken());
+   expect_true(!rt.nextToken());
 }
 
 void testSimple()
@@ -223,22 +230,45 @@ void testWhitespace()
 } // anonymous namespace
 
 
-void runTokenizerTests()
+context("RTokenizer")
 {
-   testVoid();
-   testComment();
-   testSimple();
-   testError();
-   testNumbers();
-   testOperators();
-   testUOperators();
-   testStrings();
-   testIdentifiers();
-   testWhitespace();
+   test_that("We tokenize various strings correctly")
+   {
+      testVoid();
+      testComment();
+      testSimple();
+      testError();
+      testNumbers();
+      testOperators();
+      testUOperators();
+      testStrings();
+      testIdentifiers();
+      testWhitespace();
+   }
+   
+   test_that("Comments are tokenized without a trailing newline")
+   {
+      RTokens rTokens(L"## this is a comment\n1");
+      expect_true(rTokens.size() == 3);
+      expect_true(rTokens.at(0).isType(RToken::COMMENT));
+      expect_true(rTokens.at(1).isType(RToken::WHITESPACE));
+      expect_true(rTokens.at(1).contentEquals(L"\n"));
+      expect_true(rTokens.at(2).isType(RToken::NUMBER));
+   }
+   
+   test_that("'**' is properly tokenized as a single operator")
+   {
+      RTokens rTokens(L"1 ** 2");
+      expect_true(rTokens.size() == 5);
+      expect_true(rTokens.at(0).isType(RToken::NUMBER));
+      expect_true(rTokens.at(1).isType(RToken::WHITESPACE));
+      expect_true(rTokens.at(2).isType(RToken::OPER));
+      expect_true(rTokens.at(2).contentEquals(L"**"));
+   }
 }
-
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 

@@ -48,12 +48,13 @@
 #include <session/SessionUserSettings.hpp>
 #include <session/SessionModuleContext.hpp>
 
-#include "SessionBuildEnvironment.hpp"
 #include "SessionBuildErrors.hpp"
 #include "SessionSourceCpp.hpp"
+#include "SessionInstallRtools.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 
 namespace {
@@ -85,18 +86,6 @@ std::string packageArgsVector(std::string args)
    return ostr.str();
 }
 
-shell_utils::ShellCommand buildRCmd(const core::FilePath& rBinDir)
-{
-#if defined(_WIN32)
-   shell_utils::ShellCommand rCmd(rBinDir.childPath("Rcmd.exe"));
-#else
-   shell_utils::ShellCommand rCmd(rBinDir.childPath("R"));
-   rCmd << "CMD";
-#endif
-   return rCmd;
-}
-
-
 bool isPackageBuildError(const std::string& output)
 {
    std::string input = boost::algorithm::trim_copy(output);
@@ -105,58 +94,6 @@ bool isPackageBuildError(const std::string& output)
           boost::algorithm::ends_with(input, "WARNING");
 }
 
-// R command invocation -- has two representations, one to be submitted
-// (shellCmd_) and one to show the user (cmdString_)
-class RCommand
-{
-public:
-   explicit RCommand(const FilePath& rBinDir)
-      : shellCmd_(buildRCmd(rBinDir))
-   {
-#ifdef _WIN32
-      cmdString_ = "Rcmd.exe";
-#else
-      cmdString_ = "R CMD";
-#endif
-
-      // set escape mode to files-only. this is so that when we
-      // add the group of extra arguments from the user that we
-      // don't put quotes around it.
-      shellCmd_ << shell_utils::EscapeFilesOnly;
-   }
-
-   RCommand& operator<<(const std::string& arg)
-   {
-      if (!arg.empty())
-      {
-         cmdString_ += " " + arg;
-         shellCmd_ << arg;
-      }
-      return *this;
-   }
-
-   RCommand& operator<<(const FilePath& arg)
-   {
-      cmdString_ += " " + arg.absolutePath();
-      shellCmd_ << arg;
-      return *this;
-   }
-
-
-   const std::string& commandString() const
-   {
-      return cmdString_;
-   }
-
-   const shell_utils::ShellCommand& shellCommand() const
-   {
-      return shellCmd_;
-   }
-
-private:
-   std::string cmdString_;
-   shell_utils::ShellCommand shellCmd_;
-};
 
 } // anonymous namespace
 
@@ -244,7 +181,8 @@ public:
 
 private:
    Build()
-      : isRunning_(false), terminationRequested_(false), restartR_(false)
+      : isRunning_(false), terminationRequested_(false), restartR_(false),
+        usedDevtools_(false)
    {
    }
 
@@ -411,6 +349,18 @@ private:
       boost::algorithm::split(roclets,
                               projectConfig().packageRoxygenize,
                               boost::algorithm::is_any_of(","));
+
+      // remove vignette roclet if we don't have the requisite roxygen2 version
+      bool haveVignetteRoclet = module_context::isPackageVersionInstalled(
+                                                   "roxygen2", "4.1.0.9001");
+      if (!haveVignetteRoclet)
+      {
+         std::vector<std::string>::iterator it =
+                      std::find(roclets.begin(), roclets.end(), "vignette");
+         if (it != roclets.end())
+            roclets.erase(it);
+      }
+
       BOOST_FOREACH(std::string& roclet, roclets)
       {
          roclet = "'" + roclet + "'";
@@ -464,6 +414,13 @@ private:
       {
          terminateWithError("Locating R script", error);
          return;
+      }
+
+      // check for required version of roxygen
+      if (!module_context::isMinimumRoxygenInstalled())
+      {
+         terminateWithError("roxygen2 v4.0 (or later) required to "
+                            "generate documentation");
       }
 
       // build the roxygenize command
@@ -565,7 +522,7 @@ private:
       core::system::setenv(&childEnv, "NOT_CRAN", "true");
 
       // add r tools to path if necessary
-      addRtoolsToPathIfNecessary(&childEnv, &postBuildWarning_);
+      module_context::addRtoolsToPathIfNecessary(&childEnv, &buildToolsWarning_);
 
       pkgOptions.environment = childEnv;
 
@@ -589,7 +546,7 @@ private:
          restartR_ = true;
 
          // build command
-         RCommand rCmd(rBinDir);
+         module_context::RCommand rCmd(rBinDir);
          rCmd << "INSTALL";
 
          // get extra args
@@ -651,7 +608,11 @@ private:
 
       else if (type == kTestPackage)
       {
-         devtoolsTestPackage(packagePath, pkgOptions, cb);
+
+         if (useDevtools())
+            devtoolsTestPackage(packagePath, pkgOptions, cb);
+         else
+            testPackage(packagePath, pkgOptions, cb);
       }
    }
 
@@ -662,7 +623,7 @@ private:
                            const core::system::ProcessCallbacks& cb)
    {
       // compose the build command
-      RCommand rCmd(rBinDir);
+      module_context::RCommand rCmd(rBinDir);
       rCmd << "build";
 
       // add extra args if provided
@@ -692,7 +653,7 @@ private:
                            const core::system::ProcessCallbacks& cb)
    {
       // compose the INSTALL --binary
-      RCommand rCmd(rBinDir);
+      module_context::RCommand rCmd(rBinDir);
       rCmd << "INSTALL";
       rCmd << "--build";
       rCmd << "--preclean";
@@ -724,7 +685,7 @@ private:
       // first build then check
 
       // compose the build command
-      RCommand rCmd(rBinDir);
+      module_context::RCommand rCmd(rBinDir);
       rCmd << "build";
 
       // add extra args if provided
@@ -742,7 +703,7 @@ private:
 
       // compose the check command (will be executed by the onExit
       // handler of the build cmd)
-      RCommand rCheckCmd(rBinDir);
+      module_context::RCommand rCheckCmd(rBinDir);
       rCheckCmd << "check";
 
       // add extra args if provided
@@ -809,8 +770,7 @@ private:
       // build args
       std::vector<std::string> args;
       args.push_back("--slave");
-      args.push_back("--no-save");
-      args.push_back("--no-restore");
+      args.push_back("--vanilla");
       args.push_back("-e");
       args.push_back(command);
 
@@ -820,6 +780,8 @@ private:
                args,
                pkgOptions,
                cb);
+
+      usedDevtools_ = true;
 
       return true;
    }
@@ -904,6 +866,49 @@ private:
       devtoolsExecute(command, packagePath, pkgOptions, cb);
    }
 
+   void testPackage(const FilePath& packagePath,
+                    core::system::ProcessOptions pkgOptions,
+                    const core::system::ProcessCallbacks& cb)
+   {
+      FilePath rScriptPath;
+      Error error = module_context::rScriptPath(&rScriptPath);
+      if (error)
+      {
+         terminateWithError("Locating R script", error);
+         return;
+      }
+
+      // navigate to the tests directory and source all R
+      // scripts within
+      FilePath testsPath = packagePath.complete("tests");
+
+      // construct a shell command to execute
+      shell_utils::ShellCommand cmd(rScriptPath);
+      cmd << "--slave";
+      cmd << "--vanilla";
+      cmd << "-e";
+      std::vector<std::string> rSourceCommands;
+
+      boost::format fmt(
+         "setwd('%1%'); "
+         "invisible(lapply(list.files(pattern = '\\\\.[rR]$'), function(x) { "
+         "    system(paste(shQuote('%2%'), '--vanilla --slave -f', shQuote(x))) "
+         "}))"
+      );
+
+      cmd << boost::str(fmt %
+                        testsPath.absolutePath() %
+                        rScriptPath.absolutePath());
+
+      pkgOptions.workingDir = testsPath;
+      enqueCommandString("Sourcing R files in 'tests' directory");
+      successMessage_ = "\nTests complete";
+      module_context::processSupervisor().runCommand(cmd,
+                                                     pkgOptions,
+                                                     cb);
+
+   }
+
    void devtoolsBuildPackage(const FilePath& packagePath,
                              bool binary,
                              const core::system::ProcessOptions& pkgOptions,
@@ -944,7 +949,7 @@ private:
 
    void onBuildForCheckCompleted(
                          int exitStatus,
-                         const RCommand& checkCmd,
+                         const module_context::RCommand& checkCmd,
                          const core::system::ProcessOptions& checkOptions,
                          const core::system::ProcessCallbacks& checkCb)
    {
@@ -1080,7 +1085,7 @@ private:
    bool useDevtools()
    {
       return projectConfig().packageUseDevtools &&
-             module_context::isPackageVersionInstalled("devtools", "1.4.1");
+             module_context::isMinimumDevtoolsInstalled();
    }
 
 public:
@@ -1172,10 +1177,10 @@ private:
       // call the error parser if one has been specified
       if (errorParser_)
       {
-         std::vector<CompileError> errors = errorParser_(outputAsText());
+         std::vector<SourceMarker> errors = errorParser_(outputAsText());
          if (!errors.empty())
          {
-            errorsJson_ = compileErrorsAsJson(errors);
+            errorsJson_ = sourceMarkersAsJson(errors);
             enqueBuildErrors(errorsJson_);
          }
       }
@@ -1185,19 +1190,16 @@ private:
          boost::format fmt("\nExited with status %1%.\n\n");
          enqueBuildOutput(kCompileOutputError, boost::str(fmt % exitStatus));
 
-         // if this is a package build then check if we can build
-         // C++ code at all
-         if (!pkgInfo_.empty() && postBuildWarning_.empty())
+         // if this is a package build then check for ability to
+         // build C++ code at all
+         if (!pkgInfo_.empty() && !module_context::canBuildCpp())
          {
-            if (!module_context::canBuildCpp())
-            {
-               postBuildWarning_ =
-                 "WARNING: The tools required to build R packages "
-                 "are not currently installed. Additional information on "
-                 "installing the required tools for your platform can be "
-                 "found here:\n\n"
-                 "http://www.rstudio.com/ide/docs/packages/prerequisites";
-            }
+            // prompted install of Rtools on Windows (but don't prompt if
+            // we used devtools since it likely has it's own prompt)
+#ifdef _WIN32
+            if (!usedDevtools_)
+               module_context::installRBuildTools("Building R packages");
+#endif
          }
 
          // never restart R after a failed build
@@ -1247,18 +1249,81 @@ private:
       module_context::enqueClientEvent(event);
    }
 
+   std::string parseLibrarySwitchFromInstallArgs()
+   {
+      std::string libPath;
+
+      std::string extraArgs = projectConfig().packageInstallArgs;
+      std::size_t n = extraArgs.size();
+      std::size_t index = extraArgs.find("--library=");
+
+      if (index != std::string::npos &&
+          index < n - 2) // ensure some space for path
+      {
+         std::size_t startIndex = index + std::string("--library=").length();
+         std::size_t endIndex = startIndex + 1;
+
+         // The library path can be specified with quotes + spaces, or without
+         // quotes (but no spaces), so handle both cases.
+         char firstChar = extraArgs[startIndex];
+         if (firstChar == '\'' || firstChar == '\"')
+         {
+            while (++endIndex < n)
+            {
+               // skip escaped characters
+               if (extraArgs[endIndex] == '\\')
+               {
+                  ++endIndex;
+                  continue;
+               }
+
+               if (extraArgs[endIndex] == firstChar)
+                  break;
+            }
+
+            libPath = extraArgs.substr(startIndex + 1, endIndex - startIndex - 1);
+         }
+         else
+         {
+            while (++endIndex < n)
+            {
+               if (std::isspace(extraArgs[endIndex]))
+                  break;
+            }
+            libPath = extraArgs.substr(startIndex, endIndex - startIndex + 1);
+         }
+      }
+      return libPath;
+   }
+   
    void enqueBuildCompleted()
    {
       isRunning_ = false;
 
-      if (!postBuildWarning_.empty())
+      if (!buildToolsWarning_.empty())
+      {
          enqueBuildOutput(module_context::kCompileOutputError,
-                          postBuildWarning_ + "\n\n");
+                          buildToolsWarning_ + "\n\n");
+      }
 
       // enque event
       std::string afterRestartCommand;
       if (restartR_)
-         afterRestartCommand = "library(" + pkgInfo_.name() + ")";
+      {
+         afterRestartCommand = "library(" + pkgInfo_.name();
+         
+         // if --library="" was specified and we're not in devmode,
+         // use it
+         if (!(r::session::utils::isPackratModeOn() ||
+               r::session::utils::isDevtoolsDevModeOn()))
+         {
+            std::string libPath = parseLibrarySwitchFromInstallArgs();
+            if (!libPath.empty())
+               afterRestartCommand += ", lib.loc = \"" + libPath + "\"";
+         }
+         
+         afterRestartCommand += ")";
+      }
       json::Object dataJson;
       dataJson["restart_r"] = restartR_;
       dataJson["after_restart_command"] = afterRestartCommand;
@@ -1305,11 +1370,12 @@ private:
    r_util::RPackageInfo pkgInfo_;
    projects::RProjectBuildOptions options_;
    std::string successMessage_;
-   std::string postBuildWarning_;
+   std::string buildToolsWarning_;
    boost::function<void()> successFunction_;
    boost::function<void()> failureFunction_;
    boost::function<bool(const std::string&)> errorOutputFilterFunction_;
    bool restartR_;
+   bool usedDevtools_;
 };
 
 boost::shared_ptr<Build> s_pBuild;
@@ -1363,6 +1429,20 @@ Error getCppCapabilities(const json::JsonRpcRequest& request,
    capsJson["can_build"] = module_context::canBuildCpp();
    capsJson["can_source_cpp"] = module_context::haveRcppAttributes();
    pResponse->setResult(capsJson);
+
+   return Success();
+}
+
+Error installBuildTools(const json::JsonRpcRequest& request,
+                        json::JsonRpcResponse* pResponse)
+{
+   // get param
+   std::string action;
+   Error error = json::readParam(request.params, 0, &action);
+   if (error)
+      return error;
+
+   pResponse->setResult(module_context::installRBuildTools(action));
 
    return Success();
 }
@@ -1474,38 +1554,74 @@ SEXP rs_addRToolsToPath()
     s_previousPath = core::system::getenv("PATH");
     std::string newPath = s_previousPath;
     std::string warningMsg;
-    build::addRtoolsToPathIfNecessary(&newPath, &warningMsg);
+    module_context::addRtoolsToPathIfNecessary(&newPath, &warningMsg);
     core::system::setenv("PATH", newPath);
 
 #endif
     return R_NilValue;
 }
 
+#ifdef _WIN32
+
+SEXP rs_installBuildTools()
+{
+   Error error = installRtools();
+   if (error)
+      LOG_ERROR(error);
+
+   return R_NilValue;
+}
+
+#elif __APPLE__
+
+SEXP rs_installBuildTools()
+{
+   if (module_context::isOSXMavericks())
+   {
+      if (!module_context::hasOSXMavericksDeveloperTools())
+      {
+         // on mavericks we just need to invoke clang and the user will be
+         // prompted to install the command line tools
+         core::system::ProcessResult result;
+         Error error = core::system::runCommand("clang --version",
+                                                "",
+                                                core::system::ProcessOptions(),
+                                                &result);
+         if (error)
+            LOG_ERROR(error);
+      }
+   }
+   else
+   {
+      ClientEvent event = browseUrlEvent(
+          "http://www.rstudio.org/links/install_osx_build_tools");
+      module_context::enqueClientEvent(event);
+   }
+   return R_NilValue;
+}
+
+#else
+
+SEXP rs_installBuildTools()
+{
+   return R_NilValue;
+}
+
+#endif
+
+
 SEXP rs_installPackage(SEXP pkgPathSEXP, SEXP libPathSEXP)
 {
-   // get R bin directory
-   FilePath rBinDir;
-   Error error = module_context::rBinDir(&rBinDir);
+   using namespace rstudio::r::sexp;
+   Error error = module_context::installPackage(safeAsString(pkgPathSEXP),
+                                                safeAsString(libPathSEXP));
    if (error)
    {
+      std::string desc = error.getProperty("description");
+      if (!desc.empty())
+         module_context::consoleWriteError(desc + "\n");
       LOG_ERROR(error);
-      return R_NilValue;
    }
-
-   // run command
-   RCommand installCommand(rBinDir);
-   installCommand << "INSTALL";
-   installCommand << "-l";
-   installCommand << "\"" + r::sexp::asString(libPathSEXP) + "\"";
-   installCommand << "\"" + r::sexp::asString(pkgPathSEXP) + "\"";
-   core::system::ProcessResult result;
-   error = core::system::runCommand(installCommand.commandString(),
-                                    core::system::ProcessOptions(),
-                                    &result);
-   if (error)
-      LOG_ERROR(error);
-   if ((result.exitStatus != EXIT_SUCCESS) && !result.stdErr.empty())
-      LOG_ERROR_MESSAGE("Error install package: " + result.stdErr);
 
    return R_NilValue;
 }
@@ -1591,6 +1707,12 @@ Error initialize()
    installPackageMethodDef.numArgs = 2;
    r::routines::addCallMethod(installPackageMethodDef);
 
+   R_CallMethodDef installBuildToolsMethodDef;
+   installBuildToolsMethodDef.name = "rs_installBuildTools" ;
+   installBuildToolsMethodDef.fun = (DL_FUNC) rs_installBuildTools;
+   installBuildToolsMethodDef.numArgs = 0;
+   r::routines::addCallMethod(installBuildToolsMethodDef);
+
    // subscribe to deferredInit for build tools fixup
    module_context::events().onDeferredInit.connect(onDeferredInit);
 
@@ -1614,6 +1736,7 @@ Error initialize()
       (bind(registerRpcMethod, "start_build", startBuild))
       (bind(registerRpcMethod, "terminate_build", terminateBuild))
       (bind(registerRpcMethod, "get_cpp_capabilities", getCppCapabilities))
+      (bind(registerRpcMethod, "install_build_tools", installBuildTools))
       (bind(registerRpcMethod, "devtools_load_all_path", devtoolsLoadAllPath))
       (bind(sourceModuleRFile, "SessionBuild.R"))
       (bind(source_cpp::initialize));
@@ -1626,6 +1749,17 @@ Error initialize()
 
 namespace module_context {
 
+#ifndef _WIN32
+namespace {
+
+bool usingSystemMake()
+{
+   return findProgram("make").absolutePath() == "/usr/bin/make";
+}
+
+} // anonymous namespace
+#endif
+
 bool haveRcppAttributes()
 {
    return module_context::isPackageVersionInstalled("Rcpp", "0.10.1");
@@ -1633,6 +1767,15 @@ bool haveRcppAttributes()
 
 bool canBuildCpp()
 {
+#ifdef __APPLE__
+   if (isOSXMavericks() &&
+       usingSystemMake() &&
+       !hasOSXMavericksDeveloperTools())
+   {
+      return false;
+   }
+#endif
+
    // try to build a simple c file to test whether we have build tools available
    FilePath cppPath = module_context::tempFile("test", "c");
    Error error = core::writeStringToFile(cppPath, "void test() {}\n");
@@ -1661,7 +1804,7 @@ bool canBuildCpp()
    core::system::Options childEnv;
    core::system::environment(&childEnv);
    std::string warningMsg;
-   modules::build::addRtoolsToPathIfNecessary(&childEnv, &warningMsg);
+   module_context::addRtoolsToPathIfNecessary(&childEnv, &warningMsg);
    options.environment = childEnv;
 
    core::system::ProcessResult result;
@@ -1675,7 +1818,22 @@ bool canBuildCpp()
    return result.exitStatus == EXIT_SUCCESS;
 }
 
+bool installRBuildTools(const std::string& action)
+{
+#if defined(_WIN32) || defined(__APPLE__)
+   r::exec::RFunction check(".rs.installBuildTools", action);
+   bool userConfirmed = false;
+   Error error = check.call(&userConfirmed);
+   if (error)
+      LOG_ERROR(error);
+   return userConfirmed;
+#else
+   return false;
+#endif
+}
+
 }
 
 } // namesapce session
+} // namespace rstudio
 

@@ -25,6 +25,7 @@
 
 #include <core/Error.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {  
 
@@ -56,8 +57,16 @@ inline bool isConnectionTerminatedError(const core::Error& error)
    bool badFile = error.code() == boost::asio::error::bad_descriptor;
    bool brokenPipe = error.code() == boost::asio::error::broken_pipe;
    bool noFile = error.code() == boost::system::errc::no_such_file_or_directory;
+
+#ifdef _WIN32
+   boost::system::error_code ec = error.code();
+   bool noData = (ec.category() == boost::system::get_system_category()) &&
+                 (ec.value() == ERROR_NO_DATA);
+#else
+   bool noData = false;
+#endif
    
-   return timedOut || eof || reset || badFile || brokenPipe || noFile;
+   return timedOut || eof || reset || badFile || brokenPipe || noFile || noData;
 }
 
 inline bool isConnectionUnavailableError(const Error& error)
@@ -85,5 +94,6 @@ inline bool isConnectionUnavailableError(const Error& error)
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_SOCKET_UTILS_HPP

@@ -26,23 +26,38 @@ var Tokenizer = require("ace/tokenizer").Tokenizer;
 var RMarkdownHighlightRules = require("mode/rmarkdown_highlight_rules").RMarkdownHighlightRules;
 var MatchingBraceOutdent = require("ace/mode/matching_brace_outdent").MatchingBraceOutdent;
 var RMatchingBraceOutdent = require("mode/r_matching_brace_outdent").RMatchingBraceOutdent;
+var CppMatchingBraceOutdent = require("mode/c_cpp_matching_brace_outdent").CppMatchingBraceOutdent;
 var SweaveBackgroundHighlighter = require("mode/sweave_background_highlighter").SweaveBackgroundHighlighter;
 var RCodeModel = require("mode/r_code_model").RCodeModel;
-var MarkdownFoldMode = require("mode/markdown_folding").FoldMode;
+var CppCodeModel = require("mode/cpp_code_model").CppCodeModel;
+var MarkdownFoldMode = require("ace/mode/folding/markdown").FoldMode;
+var Utils = require("mode/utils");
+var unicode = require("ace/unicode");
 
-
-var Mode = function(suppressHighlighting, doc, session) {
+var Mode = function(suppressHighlighting, session) {
    var that = this;
 
    this.$session = session;
    this.$tokenizer = new Tokenizer(new RMarkdownHighlightRules().getRules());
-
    this.$outdent = new MatchingBraceOutdent();
-   this.$r_outdent = {};
-   oop.implement(this.$r_outdent, RMatchingBraceOutdent);
 
-   this.codeModel = new RCodeModel(doc, this.$tokenizer, /^r-/,
-                                   /^(?:[ ]{4})?`{3,}\s*\{r(.*)\}\s*$/);
+   this.codeModel = new RCodeModel(
+      session,
+      this.$tokenizer,
+      /^r-/,
+      new RegExp(RMarkdownHighlightRules.prototype.$reRChunkStartString),
+      new RegExp(RMarkdownHighlightRules.prototype.$reChunkEndString)
+   );
+   this.$r_outdent = new RMatchingBraceOutdent(this.codeModel);
+
+   this.cpp_codeModel = new CppCodeModel(
+      session,
+      this.$tokenizer,
+      /^r-cpp-/,
+      new RegExp(RMarkdownHighlightRules.prototype.$reCppChunkStartString),
+      new RegExp(RMarkdownHighlightRules.prototype.$reChunkEndString)
+   );
+   this.$cpp_outdent = new CppMatchingBraceOutdent(this.cpp_codeModel);
 
    var markdownFoldingRules = new MarkdownFoldMode();
 
@@ -62,18 +77,23 @@ var Mode = function(suppressHighlighting, doc, session) {
             return that.codeModel.getFoldWidgetRange(session, foldStyle, row);
       }
 
-   };   
+   };
 
    this.$sweaveBackgroundHighlighter = new SweaveBackgroundHighlighter(
          session,
-         /^(?:[ ]{4})?`{3,}\s*\{r(?:.*)\}\s*$/,
+         /^(?:[ ]{4})?`{3,}\s*\{(?:.*)\}\s*$/,
          /^(?:[ ]{4})?`{3,}\s*$/,
          true);
 };
 oop.inherits(Mode, MarkdownMode);
 
 (function() {
-   
+
+   function activeMode(state)
+   {
+      return Utils.activeMode(state, "markdown");
+   }
+
    this.insertChunkInfo = {
       value: "```{r}\n\n```\n",
       position: {row: 0, column: 5}
@@ -81,98 +101,90 @@ oop.inherits(Mode, MarkdownMode);
 
    this.getLanguageMode = function(position)
    {
-      if (this.$session.getState(position.row).match(/^r-cpp-(?!r-)/))
-         return 'C_CPP';
+      var state = Utils.getPrimaryState(this.$session, position.row);
+      var mode = activeMode(state);
+      if (mode === "r")
+         return "R";
+      else if (mode === "r-cpp")
+         return "C_CPP";
       else
-         return this.$session.getState(position.row).match(/^r-/) ? 'R' : 'Markdown';
+         return "Markdown";
    };
 
-   this.inCppLanguageMode = function(state)
+   this.$getNextLineIndent = this.getNextLineIndent;
+   this.getNextLineIndent = function(state, line, tab, row, dontSubset)
    {
-      return state.match(/^r-cpp-(?!r-)/);
-   }
+      var mode = activeMode(state);
+      if (mode === "r")
+         return this.codeModel.getNextLineIndent(state, line, tab, row);
+      else if (mode === "r-cpp")
+         return this.cpp_codeModel.getNextLineIndent(state, line, tab, row, dontSubset);
+      else
+         return this.$getNextLineIndent(state, line, tab);
+   };
 
-   this.inMarkdownLanguageMode = function(state)
+   this.checkOutdent = function(state, line, input)
    {
-      return !state.match(/^r-/);
-   }
+      var mode = activeMode(state);
+      if (mode === "r")
+         return this.$r_outdent.checkOutdent(state, line, input);
+      else if (mode === "r-cpp")
+         return this.$cpp_outdent.checkOutdent(state, line, input);
+      else
+         return this.$outdent.checkOutdent(line, input);
+   };
 
-   this.getNextLineIndent = function(state, line, tab, tabSize, row)
+   this.autoOutdent = function(state, session, row)
    {
-      if (!this.inCppLanguageMode(state))
-         return this.codeModel.getNextLineIndent(row, line, state, tab, tabSize);
-      else {
-         // from c_cpp getNextLineIndent
-         var indent = this.$getIndent(line);
+      var mode = activeMode(state);
+      if (mode === "r")
+         return this.$r_outdent.autoOutdent(state, session, row);
+      else if (mode === "r-cpp")
+         return this.$cpp_outdent.autoOutdent(state, session, row);
+      else
+         return this.$outdent.autoOutdent(session, row);
+   };
 
-         var tokenizedLine = this.$tokenizer.getLineTokens(line, state);
-         var tokens = tokenizedLine.tokens;
-         var endState = tokenizedLine.state;
-
-         if (tokens.length && tokens[tokens.length-1].type == "comment") {
-            return indent;
+   this.transformAction = function(state, action, editor, session, text) {
+      var mode = activeMode(state);
+      // from c_cpp.js
+      if (action === 'insertion') {
+         if ((text === "\n") && (mode === "r-cpp")) {
+            // If newline in a doxygen comment, continue the comment
+            var pos = editor.getSelectionRange().start;
+            var match = /^((\s*\/\/+')\s*)/.exec(session.doc.getLine(pos.row));
+            if (match && editor.getSelectionRange().start.column >= match[2].length) {
+               return {text: "\n" + match[1]};
+            }
          }
 
-         if (state == "r-cpp-start") {
-            var match = line.match(/^.*[\{\(\[]\s*$/);
-            if (match) {
-                indent += tab;
+         else if ((text === "R") && (mode === "r-cpp")) {
+            // If newline to start and embedded R chunk complete the chunk
+            var pos = editor.getSelectionRange().start;
+            var match = /^(\s*\/\*{3,}\s*)/.exec(session.doc.getLine(pos.row));
+            if (match && editor.getSelectionRange().start.column >= match[1].length) {
+               return {text: "R\n\n*/\n",
+                       selection: [1,0,1,0]};
             }
-         } else if (state == "r-cpp-doc-start") {
-            if (endState == "start") {
-                return "";
-            }
-            var match = line.match(/^\s*(\/?)\*/);
-            if (match) {
-                if (match[1]) {
-                    indent += " ";
-                }
-                indent += "* ";
-            }
-        }
-
-        return indent;
+         }
       }
+      return false;
    };
 
-    this.checkOutdent = function(state, line, input) {
-        if (this.inCppLanguageMode(state))
-            return this.$outdent.checkOutdent(line, input);
-        else
-            return this.$r_outdent.checkOutdent(line,input);
-    };
+    this.tokenRe = new RegExp("^["
+        + unicode.packages.L
+        + unicode.packages.Mn + unicode.packages.Mc
+        + unicode.packages.Nd
+        + unicode.packages.Pc + "._]+", "g"
+    );
 
-    this.autoOutdent = function(state, doc, row) {
-        if (this.inCppLanguageMode(state))
-            return this.$outdent.autoOutdent(doc, row);
-        else
-            return this.$r_outdent.autoOutdent(state, doc, row);
-    };
-
-    this.transformAction = function(state, action, editor, session, text) {
-        // from c_cpp.js
-        if (action === 'insertion') {
-            if ((text === "\n") && this.inCppLanguageMode(state)) {
-                // If newline in a doxygen comment, continue the comment
-                var pos = editor.getSelectionRange().start;
-                var match = /^((\s*\/\/+')\s*)/.exec(session.doc.getLine(pos.row));
-                if (match && editor.getSelectionRange().start.column >= match[2].length) {
-                    return {text: "\n" + match[1]};
-                }
-            }
-        
-            else if ((text === "R") && this.inCppLanguageMode(state)) {
-                // If newline to start and embedded R chunk complete the chunk
-                var pos = editor.getSelectionRange().start;
-                var match = /^(\s*\/\*{3,}\s*)/.exec(session.doc.getLine(pos.row));
-                if (match && editor.getSelectionRange().start.column >= match[1].length) {
-                    return {text: "R\n\n*/\n",
-                            selection: [1,0,1,0]};
-                }
-            }
-        }
-        return false;
-    };
+    this.nonTokenRe = new RegExp("^(?:[^"
+        + unicode.packages.L
+        + unicode.packages.Mn + unicode.packages.Mc
+        + unicode.packages.Nd
+        + unicode.packages.Pc + "._]|\\s])+", "g"
+    );
+   
 
 }).call(Mode.prototype);
 

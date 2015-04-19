@@ -38,7 +38,6 @@ import org.rstudio.studio.client.common.GlobalDisplay;
 import org.rstudio.studio.client.common.GlobalProgressDelayer;
 import org.rstudio.studio.client.common.SimpleRequestCallback;
 import org.rstudio.studio.client.common.dependencies.DependencyManager;
-import org.rstudio.studio.client.common.dependencies.model.Dependency;
 import org.rstudio.studio.client.common.filetypes.FileTypeCommands;
 import org.rstudio.studio.client.common.filetypes.TextFileType;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Options;
@@ -52,6 +51,7 @@ import org.rstudio.studio.client.rmarkdown.model.RmdChosenTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdCreatedTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdFrontMatter;
 import org.rstudio.studio.client.rmarkdown.model.RmdFrontMatterOutputOptions;
+import org.rstudio.studio.client.rmarkdown.model.RmdOutputFormat;
 import org.rstudio.studio.client.rmarkdown.model.RmdTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdTemplateContent;
 import org.rstudio.studio.client.rmarkdown.model.RmdTemplateData;
@@ -130,36 +130,46 @@ public class TextEditingTargetRMarkdownHelper
    
    public void withRMarkdownPackage(
           final String userAction, 
+          final boolean isShinyDoc,
           final CommandWithArg<RMarkdownContext> onReady)
    {
-      dependencyManager_.withDependencies(
+      dependencyManager_.withRMarkdown(
          
-         "R Markdown",
-         
-         userAction, 
-         
-         new Dependency[] {
-           Dependency.cranPackage("knitr", "1.2"),
-           Dependency.cranPackage("yaml", "2.1.5"),
-           Dependency.embeddedPackage("rmarkdown")
-         }, 
+         userAction,  
          
          new Command() {
             
             @Override
             public void execute()
             { 
-               server_.getRMarkdownContext(
-                  new SimpleRequestCallback<RMarkdownContext>() {
+               // command to execute when we are ready
+               Command callReadyCommand = new Command() {
+                  @Override
+                  public void execute()
+                  {
+                     server_.getRMarkdownContext(
+                        new SimpleRequestCallback<RMarkdownContext>() {
 
-                     @Override
-                     public void onResponseReceived(RMarkdownContext context)
-                     {
-                        if (onReady != null)
-                           onReady.execute(context);
-                     }      
-                  });
+                           @Override
+                           public void onResponseReceived(RMarkdownContext ctx)
+                           {
+                              if (onReady != null)
+                                 onReady.execute(ctx);
+                           }      
+                        });
+                  }  
+               };
                
+               // check if this is a Shiny Doc
+               if (isShinyDoc)
+               {
+                  dependencyManager_.withShiny("Running shiny documents",
+                                               callReadyCommand);
+               }
+               else
+               {
+                  callReadyCommand.execute();
+               }
             } 
          });
    }
@@ -167,6 +177,7 @@ public class TextEditingTargetRMarkdownHelper
    public void renderNotebookv2(final DocUpdateSentinel sourceDoc)
    { 
       withRMarkdownPackage("Compiling notebooks from R scripts",
+                           false,
          new CommandWithArg<RMarkdownContext>() {
             @Override
             public void execute(RMarkdownContext arg)
@@ -250,9 +261,11 @@ public class TextEditingTargetRMarkdownHelper
                                final String format,
                                final String encoding, 
                                final boolean asTempfile,
+                               final boolean isShinyDoc,
                                final boolean asShiny)
    {
       withRMarkdownPackage("Rendering R Markdown documents", 
+                           isShinyDoc,
                            new CommandWithArg<RMarkdownContext>() {
          @Override
          public void execute(RMarkdownContext arg)
@@ -267,9 +280,11 @@ public class TextEditingTargetRMarkdownHelper
       });
    }
    
-   public void renderRMarkdownSource(final String source)
+   public void renderRMarkdownSource(final String source,
+                                     final boolean isShinyDoc)
    {
       withRMarkdownPackage("Rendering R Markdown documents", 
+                           isShinyDoc,
             new CommandWithArg<RMarkdownContext>() {
          @Override
          public void execute(RMarkdownContext arg)
@@ -347,11 +362,10 @@ public class TextEditingTargetRMarkdownHelper
          private void quoteField(YamlTree yamlTree, String field)
          {
             String value = yamlTree.getKeyValue(field);
-            if (value.length() > 0)
+
+            // The string should be quoted if it's a single line.
+            if (value.length() > 0 && value.indexOf("\n") == -1) 
             {
-               // The string should be quoted--if it isn't, apply quotes
-               // manually (consider: do we need to deal with multi-line titles 
-               // here?)
                if (!((value.startsWith("\"") && value.endsWith("\"")) ||
                      (value.startsWith("'") && value.endsWith("'"))))
                   yamlTree.setKeyValue(field, "\"" + value + "\"");
@@ -406,11 +420,13 @@ public class TextEditingTargetRMarkdownHelper
          if (tree.getKeyValue(RmdFrontMatter.KNIT_KEY).length() > 0)
             return null;
          
-         // Find the template appropriate to the first output format listed
+         // Find the template appropriate to the first output format listed.
+         // If no output format is present, assume HTML document (as the 
+         // renderer does).
          List<String> outFormats = getOutputFormats(tree);
-         if (outFormats == null)
-            return null;
-         String outFormat = outFormats.get(0);
+         String outFormat = outFormats == null ? 
+               RmdOutputFormat.OUTPUT_HTML_DOCUMENT :
+               outFormats.get(0);
          
          RmdTemplate template = getTemplateForFormat(outFormat);
          if (template == null)
@@ -522,6 +538,24 @@ public class TextEditingTargetRMarkdownHelper
          });
    }
    
+   public void addAdditionalResourceFiles(String yaml, 
+         final ArrayList<String> files, 
+         final CommandWithArg<String> onCompleted)
+   {
+      convertFromYaml(yaml, new CommandWithArg<RmdYamlData>() 
+      {
+         @Override
+         public void execute(RmdYamlData arg)
+         {
+            if (!arg.parseSucceeded())
+               onCompleted.execute(null);
+            else
+               addAdditionalResourceFiles(arg.getFrontMatter(), files, 
+                     onCompleted);
+         }
+      });
+   }
+
    // Private methods ---------------------------------------------------------
    
    private void cleanAndCreateTemplate(final RmdChosenTemplate template, 
@@ -653,6 +687,18 @@ public class TextEditingTargetRMarkdownHelper
       display.showWarningBar(feature + " requires the " +
                              "knitr package (version " + requiredVersion + 
                              " or higher)");
+   }
+   
+   private void addAdditionalResourceFiles(RmdFrontMatter frontMatter,
+         ArrayList<String> additionalFiles, 
+         CommandWithArg<String> onCompleted)
+   {
+      for (String file: additionalFiles)
+      {
+         frontMatter.addResourceFile(file);
+      }
+
+      frontMatterToYAML(frontMatter, null, onCompleted);
    }
    
    private Session session_;

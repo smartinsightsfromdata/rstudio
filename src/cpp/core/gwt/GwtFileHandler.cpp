@@ -25,6 +25,7 @@
 #include <core/http/Response.hpp>
 
 
+namespace rstudio {
 namespace core {
 namespace gwt {   
    
@@ -113,8 +114,7 @@ void handleFileRequest(const std::string& wwwLocalPath,
    // request for a URI not within our location scope
    if (uri.find(baseUri) != 0)
    {
-      pResponse->setError(http::status::NotFound, 
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -136,8 +136,8 @@ void handleFileRequest(const std::string& wwwLocalPath,
             return ;
       }
 
-      // set as chrome frame compatible
-      pResponse->setChromeFrameCompatible(request);
+      // apply browser compatibility headers
+      pResponse->setBrowserCompatible(request);
    }
    
    // get the requested file 
@@ -145,8 +145,7 @@ void handleFileRequest(const std::string& wwwLocalPath,
    FilePath filePath = requestedFile(wwwLocalPath, relativePath);
    if (filePath.empty())
    {
-      pResponse->setError(http::status::NotFound, 
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -214,4 +213,5 @@ http::UriHandlerFunction fileHandlerFunction(
 
 } // namespace gwt
 } // namespace core
+} // namespace rstudio
 

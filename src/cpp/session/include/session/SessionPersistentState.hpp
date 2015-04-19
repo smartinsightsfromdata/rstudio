@@ -22,6 +22,7 @@
 
 #include <core/Settings.hpp>
 
+namespace rstudio {
 namespace session {
 
 // singleton
@@ -51,6 +52,11 @@ public:
    std::string activeEnvironmentName() const;
    void setActiveEnvironmentName(std::string environmentName);
 
+   // resolved hashes (for Packrat libraries and lockfiles)
+   std::string getStoredHash(const std::string& hashName) const;
+   void setStoredHash(const std::string& hashName, 
+                      const std::string& hashValue);
+
    // get underlying settings
    core::Settings& settings() { return settings_; }
 
@@ -61,6 +67,7 @@ private:
 };
    
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_PERSISTENT_STATE_HPP
 

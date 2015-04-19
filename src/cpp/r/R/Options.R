@@ -13,10 +13,15 @@
 #
 #
 
+# get version
+.rs.addGlobalFunction("RStudio.Version", function() {
+   .rs.api.versionInfo()
+})
+
 # custom browseURL implementation
 options(browser = function(url)
 {
-   .Call("rs_browseURL", url) ;
+   .Call(.rs.routines$rs_browseURL, url) ;
 })
 
 # default viewer option if not already set
@@ -26,12 +31,18 @@ if (is.null(getOption("viewer"))) {
       if (!is.character(url) || (length(url) != 1))
          stop("url must be a single element character vector.", call. = FALSE)
       
+      if (identical(height, "maximize"))
+         height <- -1
+
       if (!is.null(height) && (!is.numeric(height) || (length(height) != 1)))
-         stop("height must be a single element integer vector.", call. = FALSE)
+         stop("height must be a single element numeric vector or 'maximize'.", call. = FALSE)
       
       invisible(.Call("rs_viewer", url, height))  
    })
 }
+
+# provide restart function
+options(restart = .rs.restartR)
 
 # custom pager implementation
 options(pager = .rs.pager)
@@ -40,7 +51,9 @@ options(pager = .rs.pager)
 options(menu.graphics = FALSE)
 
 # set max print so that the DOM won't go haywire showing large datasets
-options(max.print = 10000)
+if (getOption("max.print", 10000) > 10000) {
+   options(max.print = 10000)
+}
 
 # set RStudio as the GUI
 local({

@@ -46,7 +46,7 @@ GithubRepo: $PACKAGE
 GithubUsername: rstudio
 GithubRef: $PACKAGE_VERSION
 GithubSHA1: $PACKAGE_SHA1
-Repository: RStudioIDE
+Origin: RStudioIDE
 EOF
 
 # create source package (remove previous first)
@@ -64,7 +64,7 @@ mv $PACKAGE_ARCHIVE $PACKAGE_ARCHIVE_SHA1
 }
 
 install rmarkdown master
-
+install rsconnect master
 
 # back to install-dir
 cd $INSTALL_DIR

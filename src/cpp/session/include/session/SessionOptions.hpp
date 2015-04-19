@@ -30,10 +30,13 @@
 
 #include <session/SessionConstants.hpp>
 
+namespace rstudio {
 namespace core {
    class ProgramStatus;
 }
+}
 
+namespace rstudio {
 namespace session {
  
 
@@ -55,6 +58,11 @@ public:
    // read options  
    core::ProgramStatus read(int argc, char * const argv[]);   
    virtual ~Options() {}
+   
+   bool runTests() const
+   {
+      return runTests_;
+   }
    
    bool verifyInstallation() const
    {
@@ -79,7 +87,10 @@ public:
       return std::string(programMode_.c_str()); 
    }
 
-
+   bool logStderr() const
+   {
+      return logStderr_;
+   }
    
    // agreement
    core::FilePath agreementFilePath() const
@@ -112,6 +123,11 @@ public:
       return std::string(wwwPort_.c_str());
    }
 
+   std::string wwwAddress() const
+   {
+      return std::string(wwwAddress_.c_str());
+   }
+
    std::string sharedSecret() const
    {
       return std::string(secret_.c_str());
@@ -126,6 +142,8 @@ public:
 
    int disconnectedTimeoutMinutes() { return disconnectedTimeoutMinutes_; }
 
+   bool createProfile() const { return createProfile_; }
+
    bool createPublicFolder() const { return createPublicFolder_; }
 
    bool rProfileOnResumeDefault() const { return rProfileOnResumeDefault_; }
@@ -133,6 +151,8 @@ public:
    int saveActionDefault() const { return saveActionDefault_; }
 
    unsigned int minimumUserId() const { return 100; }
+
+   bool showHelpHome() const { return showHelpHome_; }
    
    core::FilePath coreRSourcePath() const 
    { 
@@ -149,11 +169,6 @@ public:
       return core::FilePath(sessionLibraryPath_.c_str());
    }
    
-   core::FilePath sessionPackagesPath() const
-   {
-      return core::FilePath(sessionPackagesPath_.c_str());
-   }
-
    core::FilePath sessionPackageArchivesPath() const
    {
       return core::FilePath(sessionPackageArchivesPath_.c_str());
@@ -246,6 +261,16 @@ public:
       return core::FilePath(pandocPath_.c_str());
    }
 
+   core::FilePath libclangPath() const
+   {
+      return core::FilePath(libclangPath_.c_str());
+   }
+
+   core::FilePath libclangHeadersPath() const
+   {
+      return core::FilePath(libclangHeadersPath_.c_str());
+   }
+
    bool allowFileDownloads() const
    {
       return allowOverlay() || allowFileDownloads_;
@@ -286,10 +311,14 @@ public:
       return allowOverlay() || allowRpubsPublish_;
    }
 
-   bool allowRmdDeployment() const 
+   bool allowExternalPublish() const
    {
-      // ShinyApps.io doesn't support R Markdown deployment 
-      return false;
+      return allowOverlay() || allowExternalPublish_;
+   }
+
+   bool allowPublish() const
+   {
+      return allowOverlay() || allowPublish_;
    }
 
    // user info
@@ -369,6 +398,11 @@ public:
       return monitorSharedSecret_.c_str();
    }
 
+   bool standalone() const
+   {
+      return standalone_;
+   }
+
    std::string getOverlayOption(const std::string& name)
    {
       return overlayOptions_[name];
@@ -383,12 +417,17 @@ private:
                             std::string* pPath);
    void resolvePandocPath(const core::FilePath& resourcePath, std::string* pPath);
 
+   void resolveRsclangPath(const core::FilePath& resourcePath, std::string* pPath);
+
    void addOverlayOptions(boost::program_options::options_description* pOpt);
    bool validateOverlayOptions(std::string* pErrMsg);
    void resolveOverlayOptions();
    bool allowOverlay() const;
 
 private:
+   // tests
+   bool runTests_;
+   
    // verify
    bool verifyInstallation_;
    std::string verifyInstallationHomeDir_;
@@ -396,6 +435,9 @@ private:
    // program
    std::string programIdentity_;
    std::string programMode_;
+
+   // log
+   bool logStderr_;
 
    // agreement
    std::string agreementFilePath_;
@@ -407,21 +449,24 @@ private:
    std::string wwwLocalPath_;
    std::string wwwSymbolMapsPath_;
    std::string wwwPort_;
+   std::string wwwAddress_;
 
    // session
    std::string secret_;
    std::string preflightScript_;
    int timeoutMinutes_;
    int disconnectedTimeoutMinutes_;
+   bool createProfile_;
    bool createPublicFolder_;
    bool rProfileOnResumeDefault_;
    int saveActionDefault_;
+   bool standalone_;
+   bool showHelpHome_;
 
    // r
    std::string coreRSourcePath_;
    std::string modulesRSourcePath_;
    std::string sessionLibraryPath_;
-   std::string sessionPackagesPath_;
    std::string sessionPackageArchivesPath_;
    std::string rLibsUser_;
    std::string rCRANRepos_;
@@ -447,6 +492,8 @@ private:
    std::string hunspellDictionariesPath_;
    std::string mathjaxPath_;
    std::string pandocPath_;
+   std::string libclangPath_;
+   std::string libclangHeadersPath_;
 
    bool allowFileDownloads_;
    bool allowShell_;
@@ -456,6 +503,8 @@ private:
    bool allowVcsExecutableEdit_;
    bool allowRemovePublicFolder_;
    bool allowRpubsPublish_;
+   bool allowExternalPublish_;
+   bool allowPublish_;
 
    // user info
    bool showUserIdentity_;
@@ -478,6 +527,7 @@ private:
 };
   
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_OPTIONS_HPP
 

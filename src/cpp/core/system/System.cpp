@@ -21,6 +21,7 @@
 
 #include <core/system/Environment.hpp>
 
+namespace rstudio {
 namespace core {
 namespace system {
      
@@ -30,6 +31,27 @@ namespace system {
 #define kPathSeparator ":"
 #endif
 
+
+bool realPathsEqual(const FilePath& a, const FilePath& b)
+{
+   FilePath aReal, bReal;
+
+   Error error = realPath(a, &aReal);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return false;
+   }
+
+   error = realPath(b, &bReal);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return false;
+   }
+
+   return aReal == bReal;
+}
 
 void addToSystemPath(const FilePath& path, bool prepend)
 {
@@ -69,4 +91,5 @@ std::string generateShortenedUuid()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

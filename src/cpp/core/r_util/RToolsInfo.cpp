@@ -20,7 +20,9 @@
 #include <boost/algorithm/string.hpp>
 
 #include <core/Log.hpp>
+#include <core/http/URL.hpp>
 #include <core/StringUtils.hpp>
+#include <core/system/Types.hpp>
 
 #include <core/system/RegistryKey.hpp>
 
@@ -28,6 +30,7 @@
 #define KEY_WOW64_32KEY 0x0200
 #endif
 
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -41,6 +44,7 @@ RToolsInfo::RToolsInfo(const std::string& name, const FilePath& installPath)
 {
    std::string versionMin, versionMax;
    std::vector<std::string> relativePathEntries;
+   std::vector<core::system::Option> environmentVars;
    if (name == "2.11")
    {
       versionMin = "2.10.0";
@@ -95,6 +99,20 @@ RToolsInfo::RToolsInfo(const std::string& name, const FilePath& installPath)
       relativePathEntries.push_back("bin");
       relativePathEntries.push_back("gcc-4.6.3/bin");
    }
+   else if (name == "3.2")
+   {
+      versionMin = "3.1.0";
+      versionMax = "3.2.0";
+      relativePathEntries.push_back("bin");
+      relativePathEntries.push_back("gcc-4.6.3/bin");
+   }
+   else if (name == "3.3")
+   {
+      versionMin = "3.2.0";
+      versionMax = "3.3.99";
+      relativePathEntries.push_back("bin");
+      relativePathEntries.push_back("gcc-4.6.3/bin");
+   }
 
    // build version predicate and path list if we can
    if (!versionMin.empty())
@@ -106,7 +124,18 @@ RToolsInfo::RToolsInfo(const std::string& name, const FilePath& installPath)
       {
          pathEntries_.push_back(installPath_.childPath(relativePath));
       }
+
+      environmentVars_ = environmentVars;
    }
+}
+
+std::string RToolsInfo::url(const std::string& repos) const
+{
+   // strip period from name
+   std::string ver = boost::algorithm::replace_all_copy(name(), ".", "");
+   std::string url = core::http::URL::complete(
+                        repos, "bin/windows/Rtools/Rtools" + ver + ".exe");
+   return url;
 }
 
 std::ostream& operator<<(std::ostream& os, const RToolsInfo& info)
@@ -117,6 +146,11 @@ std::ostream& operator<<(std::ostream& os, const RToolsInfo& info)
    {
      os << pathEntry << std::endl;
    }
+   BOOST_FOREACH(const core::system::Option& var, info.environmentVars())
+   {
+      os << var.first << "=" << var.second << std::endl;
+   }
+
    return os;
 }
 
@@ -169,6 +203,7 @@ Error scanRegistryForRTools(std::vector<RToolsInfo>* pRTools)
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 

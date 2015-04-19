@@ -24,10 +24,10 @@ import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.notebook.CompileNotebookPrefs;
 import org.rstudio.studio.client.notebookv2.CompileNotebookv2Prefs;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
+import org.rstudio.studio.client.workbench.exportplot.model.ExportPlotOptions;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedHandler;
-import org.rstudio.studio.client.workbench.views.plots.model.ExportPlotOptions;
 import org.rstudio.studio.client.workbench.views.plots.model.SavePlotAsPdfOptions;
 
 @Singleton
@@ -116,9 +116,86 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
          useVimMode().setGlobalValue(
                               newUiPrefs.useVimMode().getGlobalValue());
          
+         continueCommentsOnNewline().setGlobalValue(
+                              newUiPrefs.continueCommentsOnNewline().getGlobalValue());
+         
          // insert matching
          insertMatching().setGlobalValue(
                                  newUiPrefs.insertMatching().getGlobalValue());
+              
+         codeComplete().setGlobalValue(
+                                 newUiPrefs.codeComplete().getGlobalValue());
+         
+         codeCompleteOther().setGlobalValue(
+               newUiPrefs.codeCompleteOther().getGlobalValue());
+         
+         alwaysCompleteInConsole().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteInConsole().getGlobalValue());
+         
+         alwaysCompleteDelayMs().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteDelayMs().getGlobalValue());
+         
+         alwaysCompleteCharacters().setGlobalValue(
+                                 newUiPrefs.alwaysCompleteCharacters().getGlobalValue());
+         
+         insertParensAfterFunctionCompletion().setGlobalValue(
+                                 newUiPrefs.insertParensAfterFunctionCompletion().getGlobalValue());
+         
+         allowTabMultilineCompletion().setGlobalValue(
+                                 newUiPrefs.allowTabMultilineCompletion().getGlobalValue());
+         
+         enableSnippets().setGlobalValue(
+                                 newUiPrefs.enableSnippets().getGlobalValue());
+         
+         insertSpacesAroundEquals().setGlobalValue(
+                                 newUiPrefs.insertSpacesAroundEquals().getGlobalValue());
+         
+         showSignatureTooltips().setGlobalValue(
+                                 newUiPrefs.showSignatureTooltips().getGlobalValue());
+         
+         
+         /* Diagnostics */
+         
+         // R Diagnostics
+         
+         showDiagnosticsR().setGlobalValue(
+               newUiPrefs.showDiagnosticsR().getGlobalValue());
+         
+         diagnosticsInRFunctionCalls().setGlobalValue(
+               newUiPrefs.diagnosticsInRFunctionCalls().getGlobalValue());
+         
+         checkArgumentsToRFunctionCalls().setGlobalValue(
+               newUiPrefs.checkArgumentsToRFunctionCalls().getGlobalValue());
+         
+         warnIfNoSuchVariableInScope().setGlobalValue(
+               newUiPrefs.warnIfNoSuchVariableInScope().getGlobalValue());
+         
+         warnIfVariableDefinedButNotUsed().setGlobalValue(
+               newUiPrefs.warnIfVariableDefinedButNotUsed().getGlobalValue());
+         
+         enableStyleDiagnostics().setGlobalValue(
+               newUiPrefs.enableStyleDiagnostics().getGlobalValue());
+         
+         // Other diagnostics
+         
+         showDiagnosticsCpp().setGlobalValue(
+               newUiPrefs.showDiagnosticsCpp().getGlobalValue());
+         
+         showDiagnosticsOther().setGlobalValue(
+               newUiPrefs.showDiagnosticsOther().getGlobalValue());
+         
+         // Background Linting
+         
+         diagnosticsOnSave().setGlobalValue(
+               newUiPrefs.diagnosticsOnSave().getGlobalValue());
+         
+         enableBackgroundDiagnostics().setGlobalValue(
+               newUiPrefs.enableBackgroundDiagnostics().getGlobalValue());
+         
+         backgroundDiagnosticsDelayMs().setGlobalValue(
+               newUiPrefs.backgroundDiagnosticsDelayMs().getGlobalValue());
+         
+         /* End Diagnostics UI Prefs */
          
          autoAppendNewline().setGlobalValue(
                                  newUiPrefs.autoAppendNewline().getGlobalValue());
@@ -186,6 +263,16 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
             savePlotAsPdfOptions().setGlobalValue(
                          newUiPrefs.savePlotAsPdfOptions().getGlobalValue());
          }
+         
+         // export viewer options
+         if (!ExportPlotOptions.areEqual(
+               newUiPrefs.exportViewerOptions().getGlobalValue(),
+               exportViewerOptions().getGlobalValue()))
+         {
+            exportViewerOptions().setGlobalValue(
+                          newUiPrefs.exportViewerOptions().getGlobalValue());
+         }
+         
          
          // compile notebook options
          if (!CompileNotebookPrefs.areEqual(
@@ -279,6 +366,10 @@ public class UIPrefs extends UIPrefsAccessor implements UiPrefsChangedHandler
          // preferred R Markdown template
          rmdPreferredTemplatePath().setGlobalValue(
                newUiPrefs.rmdPreferredTemplatePath().getGlobalValue());
+
+         // whether to show publish UI 
+         showPublishUi().setGlobalValue(
+               newUiPrefs.showPublishUi().getGlobalValue());
       }
       else if (e.getType().equals(UiPrefsChangedEvent.PROJECT_TYPE))
       {

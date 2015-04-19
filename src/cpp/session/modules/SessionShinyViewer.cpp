@@ -31,8 +31,9 @@
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionUserSettings.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace shiny_viewer {
@@ -125,7 +126,7 @@ Error setShinyViewer(boost::shared_ptr<int> pShinyViewerType,
                      const json::JsonRpcRequest& request,
                      json::JsonRpcResponse*)
 {
-   int viewerType;
+   int viewerType = 0;
    Error error = json::readParams(request.params, &viewerType);
    if (error)
       return error;
@@ -225,4 +226,5 @@ Error initialize()
 } // namespace shiny_viewer
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

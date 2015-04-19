@@ -19,6 +19,8 @@
 #include <ostream>
 
 #include <algorithm>
+#include <boost/algorithm/string.hpp>
+#include <boost/algorithm/string/case_conv.hpp>
 #include <boost/algorithm/string/classification.hpp>
 #include <boost/algorithm/string/replace.hpp>
 #include <boost/algorithm/string/split.hpp>
@@ -33,8 +35,120 @@
 #include <winnls.h>
 #endif
 
+namespace rstudio {
 namespace core {
-namespace string_utils {   
+namespace string_utils {
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n)
+{
+   std::string::size_type self_n = self.length();
+
+   if (other_n == 0)
+      return true;
+
+   if (other_n > other.length())
+      other_n = other.length();
+
+   if (other_n > self_n)
+      return false;
+
+   std::string::size_type self_idx = 0;
+   std::string::size_type other_idx = 0;
+
+   while (self_idx < self_n)
+   {
+      char selfChar = self[self_idx];
+      char otherChar = other[other_idx];
+
+      if (otherChar == selfChar)
+      {
+         ++other_idx;
+         if (other_idx == other_n)
+         {
+            return true;
+         }
+      }
+      ++self_idx;
+   }
+   return false;
+}
+
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n,
+                   bool caseInsensitive)
+{
+   return caseInsensitive ?
+            isSubsequence(boost::algorithm::to_lower_copy(self),
+                          boost::algorithm::to_lower_copy(other),
+                          other_n) :
+            isSubsequence(self, other, other_n)
+            ;
+}
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other)
+{
+   return isSubsequence(self, other, other.length());
+}
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   bool caseInsensitive)
+{
+   return isSubsequence(self, other, other.length(), caseInsensitive);
+}
+
+std::vector<int> subsequenceIndices(std::string const& sequence,
+                                    std::string const& query)
+{
+   int query_n = query.length();
+   std::vector<int> result;
+   result.reserve(query.length());
+
+   int prevMatchIndex = -1;
+   for (int i = 0; i < query_n; i++)
+   {
+      result[i] = sequence.find(query[i], prevMatchIndex + 1);
+      prevMatchIndex = result[i];
+   }
+   return result;
+}
+
+bool subsequenceIndices(std::string const& sequence,
+                        std::string const& query,
+                        std::vector<int> *pIndices)
+{
+   pIndices->clear();
+   pIndices->reserve(query.length());
+   
+   int query_n = query.length();
+   int prevMatchIndex = -1;
+   
+   for (int i = 0; i < query_n; i++)
+   {
+      int index = sequence.find(query[i], prevMatchIndex + 1);
+      if (index == -1)
+         return false;
+      
+      pIndices->push_back(index);
+      prevMatchIndex = index;
+   }
+   
+   return true;
+}
+
+std::string getExtension(std::string const& x)
+{
+   std::size_t lastDotIndex = x.rfind('.');
+   if (lastDotIndex != std::string::npos)
+      return x.substr(lastDotIndex);
+   else
+      return std::string();
+}
 
 void convertLineEndings(std::string* pStr, LineEnding type)
 {
@@ -178,17 +292,18 @@ std::string escape(std::string specialChars,
 std::string htmlEscape(const std::string& str, bool isAttributeValue)
 {
    std::string escapes = isAttributeValue ?
-                         "<>&'\"\r\n" :
-                         "<>&" ;
+                         "<>&'\"/\r\n" :
+                         "<>&'\"/" ;
 
    std::map<char, std::string> subs;
    subs['<'] = "&lt;";
    subs['>'] = "&gt;";
    subs['&'] = "&amp;";
+   subs['\''] = "&#x27;";
+   subs['"'] = "&quot;";
+   subs['/'] = "&#x2F;";
    if (isAttributeValue)
    {
-      subs['\''] = "&#39;";
-      subs['"'] = "&quot;";
       subs['\r'] = "&#13;";
       subs['\n'] = "&#10;";
    }
@@ -286,7 +401,7 @@ std::vector<bool> initAlphaLookupTable()
 bool isalpha(wchar_t c)
 {
    static std::vector<bool> lookup = initAlphaLookupTable();
-   if (c > 0xFFFF)
+   if (c >= 0xFFFF)
       return false; // This function only supports BMP
    return lookup.at(c);
 }
@@ -297,7 +412,7 @@ bool isalnum(wchar_t c)
    if (lookup.empty())
       lookup = initAlnumLookupTable();
 
-   if (c > 0xFFFF)
+   if (c >= 0xFFFF)
       return false; // This function only supports BMP
    return lookup.at(c);
 }
@@ -346,6 +461,21 @@ void trimLeadingLines(int maxLines, std::string* pLines)
    }
 }
 
+std::string strippedOfBackQuotes(const std::string& string)
+{
+   if (string.length() < 2)
+      return string;
+   
+   std::size_t startIndex = 0;
+   std::size_t n = string.length();
+   std::size_t endIndex = n;
+   
+   startIndex += string[0] == '`';
+   endIndex   -= string[n - 1] == '`';
+   
+   return string.substr(startIndex, endIndex - startIndex);
+}
+
 void stripQuotes(std::string* pStr)
 {
    if (pStr->length() > 0 && (pStr->at(0) == '\'' || pStr->at(0) == '"'))
@@ -357,8 +487,108 @@ void stripQuotes(std::string* pStr)
       *pStr = pStr->substr(0, len -1);
 }
 
+std::string strippedOfQuotes(const std::string& string)
+{
+   std::string::size_type n = string.length();
+   if (n < 2) return string;
+   
+   char first = string[0];
+   char last  = string[n - 1];
+   
+   if ((first == '\'' && last == '\'') ||
+       (first == '"' && last == '"') |\
+       (first == '`' && last == '`'))
+   {
+      return string.substr(1, n - 2);
+   }
+   
+   return string;
+}
+
+template <typename Iter, typename U>
+Iter countNewlinesImpl(Iter begin,
+                       Iter end,
+                       const U& CR,
+                       const U& LF,
+                       std::size_t* pNewlineCount)
+{
+   std::size_t newlineCount = 0;
+   Iter it = begin;
+   
+   Iter lastNewline = end;
+   
+   for (; it != end; ++it)
+   {
+      // Detect '\r\n'
+      if (*it == CR)
+      {
+         if (it + 1 != end &&
+             *(it + 1) == LF)
+         {
+            lastNewline = it;
+            ++it;
+            ++newlineCount;
+         }
+      }
+      
+      // Detect '\n'
+      if (*it == LF)
+      {
+         lastNewline = it;
+         ++newlineCount;
+      }
+   }
+   
+   *pNewlineCount = newlineCount;
+   return lastNewline;
+}
+
+std::size_t countNewlines(const std::wstring& string)
+{
+   std::size_t count = 0;
+   countNewlinesImpl(string.begin(), string.end(), L'\r', L'\n', &count);
+   return count;
+}
+
+std::size_t countNewlines(const std::string& string)
+{
+   std::size_t count = 0;
+   countNewlinesImpl(string.begin(), string.end(), '\r', '\n', &count);
+   return count;
+}
+
+std::size_t countNewlines(std::string::iterator begin,
+                          std::string::iterator end)
+{
+   std::size_t count = 0;
+   countNewlinesImpl(begin, end, '\r', '\n', &count);
+   return count;
+}
+
+std::size_t countNewlines(std::wstring::iterator begin,
+                          std::wstring::iterator end)
+{
+   std::size_t count = 0;
+   countNewlinesImpl(begin, end, '\r', '\n', &count);
+   return count;
+}
+
+std::wstring::const_iterator countNewlines(std::wstring::const_iterator begin,
+                                           std::wstring::const_iterator end,
+                                           std::size_t* pCount)
+{
+   return countNewlinesImpl(begin, end, '\r', '\n', pCount);
+}
+
+bool isPrefixOf(const std::string& self, const std::string& prefix)
+{
+   return boost::algorithm::starts_with(self, prefix);
+}
+
+
 } // namespace string_utils
 } // namespace core 
+} // namespace rstudio
 
 
 

@@ -22,8 +22,9 @@
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace presentation {
@@ -121,6 +122,7 @@ json::Object SlideNavigationList::asJson() const
 {
    json::Object slideNavigationJson;
    slideNavigationJson["total_slides"] = index_;
+   slideNavigationJson["anchor_parens"] = false;
    slideNavigationJson["items"] = slides_;
    return slideNavigationJson;
 }
@@ -142,4 +144,5 @@ void SlideNavigationList::addSlide(const std::string& title,
 } // namespace presentation
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

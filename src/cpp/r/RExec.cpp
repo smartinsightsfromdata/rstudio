@@ -33,8 +33,9 @@ LibExtern int R_interrupts_pending;
 LibExtern int UserBreak;
 #endif
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
    
 namespace exec {
@@ -110,6 +111,7 @@ Error evaluateExpressionsUnsafe(SEXP expr,
                                 SEXP* pSEXP,
                                 sexp::Protect* pProtect)
 {
+
    int er=0;
    int i=0,l;
    
@@ -117,6 +119,7 @@ Error evaluateExpressionsUnsafe(SEXP expr,
    // and return only the last one
    if (TYPEOF(expr)==EXPRSXP) 
    {
+      DisableDebugScope disableStepInto(env);
       l = LENGTH(expr);
       while (i<l) 
       {
@@ -127,6 +130,7 @@ Error evaluateExpressionsUnsafe(SEXP expr,
    // evaluate single expression
    else
    {
+      DisableDebugScope disableStepInto(R_GlobalEnv);
       *pSEXP = R_tryEval(expr, R_GlobalEnv, &er);
    }
    
@@ -190,6 +194,7 @@ Error executeSafely(boost::function<void()> function)
 {
    // disable custom error handlers while we execute code
    DisableErrorHandlerScope disableErrorHandler;
+   DisableDebugScope disableStepInto(R_GlobalEnv);
 
    Rboolean success = R_ToplevelExec(topLevelExec, (void*)&function);
    if (!success)
@@ -206,6 +211,7 @@ core::Error executeSafely(boost::function<SEXP()> function, SEXP* pSEXP)
 {
    // disable custom error handlers while we execute code
    DisableErrorHandlerScope disableErrorHandler;
+   DisableDebugScope disableStepInto(R_GlobalEnv);
 
    SEXPTopLevelExecContext context ;
    context.function = function ;
@@ -236,7 +242,7 @@ Error evaluateString(const std::string& str,
    r::sourceManager().reloadIfNecessary();
    
    // surrond the string with try in silent mode so we can capture error text
-   std::string rCode = "try(" + str + ", TRUE)";
+   std::string rCode = "base::try(" + str + ", TRUE)";
 
    // parse expression
    SEXP ps;
@@ -269,6 +275,12 @@ Error evaluateString(const std::string& str,
    return Success();
 }
    
+bool atTopLevelContext() 
+{
+   return getGlobalContext() != NULL &&
+          getGlobalContext()->callflag == CTXT_TOPLEVEL;
+}
+
 RFunction::RFunction(SEXP functionSEXP)
 {
    functionSEXP_ = functionSEXP;
@@ -297,7 +309,6 @@ void RFunction::commonInit(const std::string& functionName)
    {
       ns = functionName_.substr(0, pos);
       name = functionName_.substr(pos + nsQual.size());
-      
    }
    else
    {
@@ -338,6 +349,7 @@ Error RFunction::call(SEXP evalNS, bool safely, SEXP* pResultSEXP,
    // verify the function
    if (functionSEXP_ == R_UnboundValue)
    {
+      LOG_ERROR_MESSAGE("Failed to find function: '" + functionName_ + "'");
       Error error(errc::SymbolNotFoundError, ERROR_LOCATION);
       if (!functionName_.empty())
          error.addProperty("symbol", functionName_);
@@ -438,6 +450,12 @@ void warning(const std::string& warning)
    Rf_warning(warning.c_str());
 }
 
+void message(const std::string& message)
+{
+   Error error = r::exec::RFunction("message", message).call();
+   if (error)
+      LOG_ERROR(error);
+}
 
 bool interruptsPending()
 {
@@ -498,8 +516,40 @@ IgnoreInterruptsScope::~IgnoreInterruptsScope()
    }
 }
 
+DisableDebugScope::DisableDebugScope(SEXP env): 
+   rdebug_(0), 
+   env_(NULL)
+{
+   // nothing to do if no environment 
+   if (env == NULL) {
+      return;
+   }
+
+   // check to see whether there's a debug flag set on this environment
+   rdebug_ = RDEBUG(env);
+
+   // if there is, turn it off and save the old flag for restoration
+   if (rdebug_ != 0) 
+   {
+      SET_RDEBUG(env, 0);
+      env_ = env;
+   } 
+}
+
+DisableDebugScope::~DisableDebugScope()
+{
+   // if we disabled debugging and debugging didn't end during the command 
+   // evaluation, restore debugging
+   if (env_ != NULL && !atTopLevelContext()) 
+   {
+      SET_RDEBUG(env_, rdebug_);
+   }
+}
+
+
 } // namespace exec   
 } // namespace r
+} // namespace rstudio
 
 
 

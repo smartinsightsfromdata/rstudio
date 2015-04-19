@@ -45,6 +45,7 @@ set (CORE_SOURCE_FILES
    PerformanceTimer.cpp
    ProgramOptions.cpp
    RegexUtils.cpp
+   RecursionGuard.cpp
    SafeConvert.cpp
    Settings.cpp
    StderrLogWriter.cpp
@@ -55,6 +56,17 @@ set (CORE_SOURCE_FILES
    gwt/GwtFileHandler.cpp
    gwt/GwtLogHandler.cpp
    gwt/GwtSymbolMaps.cpp
+   libclang/CodeCompleteResults.cpp
+   libclang/Cursor.cpp
+   libclang/Diagnostic.cpp
+   libclang/LibClang.cpp
+   libclang/SourceIndex.cpp
+   libclang/SourceLocation.cpp
+   libclang/SourceRange.cpp
+   libclang/Token.cpp
+   libclang/TranslationUnit.cpp
+   libclang/UnsavedFiles.cpp
+   libclang/Utils.cpp
    json/Json.cpp
    json/JsonRpc.cpp
    json/spirit/json_spirit_reader.cpp
@@ -83,6 +95,7 @@ set (CORE_SOURCE_FILES
    markdown/sundown/stack.c
    r_util/RPackageInfo.cpp
    r_util/RProjectFile.cpp
+   r_util/RSessionContext.cpp
    r_util/RTokenizer.cpp
    r_util/RSourceIndex.cpp
    r_util/RTokenizerTests.cpp
@@ -177,6 +190,7 @@ if (UNIX)
       PosixStringUtils.cpp
       r_util/REnvironmentPosix.cpp
       r_util/RSessionLaunchProfile.cpp
+      r_util/RVersionsPosix.cpp
       SyslogLogWriter.cpp
       system/PosixChildProcessTracker.cpp
       system/PosixEnvironment.cpp
@@ -254,11 +268,11 @@ if(RSTUDIO_ADDINS_PATH)
    endif()
 endif()
 
-
 # include directories
 include_directories(
    ${CORE_INCLUDE_DIRS}
    ${CMAKE_CURRENT_BINARY_DIR}
+   ${TESTS_INCLUDE_DIR}
 )
 
 # define shared library
@@ -270,3 +284,24 @@ target_link_libraries(
    ${Boost_LIBRARIES}
    ${CORE_SYSTEM_LIBRARIES}
 )
+
+# define executable (for running unit tests)
+if (RSTUDIO_UNIT_TESTS_ENABLED)
+
+   file(GLOB_RECURSE CORE_TEST_FILES "*Tests.cpp")
+
+   add_executable(rstudio-core-tests
+      TestMain.cpp
+      ${CORE_TEST_FILES}
+      ${CORE_HEADER_FILES}
+   )
+
+   target_link_libraries(rstudio-core-tests
+      rstudio-core
+      rstudio-core-synctex
+      rstudio-core-hunspell
+      ${Boost_LIBRARIES}
+      ${CORE_SYSTEM_LIBRARIES}
+   )
+
+endif()

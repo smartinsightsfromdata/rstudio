@@ -22,18 +22,21 @@
 
 #include <core/FileSerializer.hpp>
 #include <core/r_util/RProjectFile.hpp>
+#include <core/r_util/RSessionContext.hpp>
 
 #include <core/system/FileMonitor.hpp>
 
 #include <r/RExec.hpp>
+#include <r/RRoutines.hpp>
 
 #include <session/SessionUserSettings.hpp>
 #include <session/SessionModuleContext.hpp>
 
 #include "SessionProjectFirstRun.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace projects {
 
@@ -259,9 +262,36 @@ void ProjectContext::augmentRbuildignore()
    }
 }
 
+SEXP rs_getProjectDirectory()
+{
+   SEXP absolutePathSEXP = R_NilValue;
+   if (projectContext().hasProject())
+   {
+      r::sexp::Protect protect;
+      absolutePathSEXP = r::sexp::create(
+               projectContext().directory().absolutePath(), &protect);
+   }
+   return absolutePathSEXP;
+}
+
+SEXP rs_hasFileMonitor()
+{
+   r::sexp::Protect protect;
+   return r::sexp::create(projectContext().hasFileMonitor(), &protect);
+}
 
 Error ProjectContext::initialize()
 {
+   r::routines::registerCallMethod(
+            "rs_getProjectDirectory",
+            (DL_FUNC) rs_getProjectDirectory,
+            0);
+   
+   r::routines::registerCallMethod(
+            "rs_hasFileMonitor",
+            (DL_FUNC) rs_hasFileMonitor,
+            0);
+   
    if (hasProject())
    {
       // read build options for the side effect of updating buildOptions_
@@ -295,8 +325,6 @@ Error ProjectContext::initialize()
 
 
 namespace {
-const char * const kLastProjectPath = "last-project-path";
-
 
 // NOTE: the HttpConnectionListener relies on this path as well as the
 // kNextSessionProject constant in order to write the next session project
@@ -305,42 +333,17 @@ const char * const kLastProjectPath = "last-project-path";
 // that are single threaded by convention
 FilePath settingsPath()
 {
-   FilePath settingsPath = session::options().userScratchPath().complete(
-                                                        kProjectsSettings);
-   Error error = settingsPath.ensureDirectory();
-   if (error)
-      LOG_ERROR(error);
-
-   return settingsPath;
+   return r_util::projectsSettingsPath(session::options().userScratchPath());
 }
 
 std::string readSetting(const char * const settingName)
 {
-   FilePath readPath = settingsPath().complete(settingName);
-   if (readPath.exists())
-   {
-      std::string value;
-      Error error = core::readStringFromFile(readPath, &value);
-      if (error)
-      {
-         LOG_ERROR(error);
-         return std::string();
-      }
-      boost::algorithm::trim(value);
-      return value;
-   }
-   else
-   {
-      return std::string();
-   }
+   return r_util::readProjectsSetting(settingsPath(), settingName);
 }
 
 void writeSetting(const char * const settingName, const std::string& value)
 {
-   FilePath writePath = settingsPath().complete(settingName);
-   Error error = core::writeStringToFile(writePath, value);
-   if (error)
-      LOG_ERROR(error);
+   r_util::writeProjectsSetting(settingsPath(), settingName, value);
 }
 
 } // anonymous namespace
@@ -593,6 +596,7 @@ r_util::RProjectConfig ProjectContext::defaultConfig()
 {
    // setup defaults for project file
    r_util::RProjectConfig defaultConfig;
+   defaultConfig.rVersion = r_util::RVersionInfo(kRVersionDefault);
    defaultConfig.useSpacesForTab = userSettings().useSpacesForTab();
    defaultConfig.numSpacesForTab = userSettings().numSpacesForTab();
    defaultConfig.autoAppendNewline = userSettings().autoAppendNewline();
@@ -704,7 +708,13 @@ Error ProjectContext::writeBuildOptions(const RProjectBuildOptions& options)
    return Success();
 }
 
+bool ProjectContext::isPackageProject()
+{
+   return r_util::isPackageDirectory(directory());
+}
+
 
 } // namespace projects
-} // namesapce session
+} // namespace session
+} // namespace rstudio
 

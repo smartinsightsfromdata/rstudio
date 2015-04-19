@@ -20,6 +20,7 @@
 #include <ostream>
 
 #include <boost/format.hpp>
+#include <boost/regex.hpp>
 
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
@@ -28,7 +29,9 @@
 #include <core/text/DcfParser.hpp>
 
 #include <core/r_util/RPackageInfo.hpp>
+#include <core/r_util/RVersionInfo.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -192,6 +195,46 @@ std::string detectBuildType(const FilePath& projectFilePath,
    return detectBuildType(projectFilePath, buildDefaults, &config);
 }
 
+std::string rVersionAsString(const RVersionInfo& rVersion)
+{
+   std::string ver = rVersion.number;
+   if (!rVersion.arch.empty())
+      ver += ("/" + rVersion.arch);
+   return ver;
+}
+
+RVersionInfo rVersionFromString(const std::string& str)
+{
+   std::size_t pos = str.find('/');
+   if (pos == std::string::npos)
+      return RVersionInfo(str);
+   else
+      return RVersionInfo(str.substr(0, pos), str.substr(pos+1));
+}
+
+bool interpretRVersionValue(const std::string& value,
+                            RVersionInfo* pRVersion)
+{
+   RVersionInfo version = rVersionFromString(value);
+
+   if (version.number != kRVersionDefault &&
+       !boost::regex_match(version.number, boost::regex("[\\d\\.]+")))
+   {
+      return false;
+   }
+   else if (version.arch != "" &&
+            version.arch != kRVersionArch32 &&
+            version.arch != kRVersionArch64)
+   {
+      return false;
+   }
+   else
+   {
+      *pRVersion = version;
+      return true;
+   }
+}
+
 } // anonymous namespace
 
 std::ostream& operator << (std::ostream& stream, const YesNoAskValue& val)
@@ -216,6 +259,18 @@ std::ostream& operator << (std::ostream& stream, const YesNoAskValue& val)
    return stream ;
 }
 
+Error readProjectFile(const FilePath& projectFilePath,
+                      RProjectConfig* pConfig,
+                      std::string* pUserErrMsg)
+{
+   bool providedDefaults;
+   return readProjectFile(projectFilePath,
+                          RProjectConfig(),
+                          RProjectBuildDefaults(),
+                          pConfig,
+                          &providedDefaults,
+                          pUserErrMsg);
+}
 
 Error readProjectFile(const FilePath& projectFilePath,
                       const RProjectConfig& defaultConfig,
@@ -264,6 +319,18 @@ Error readProjectFile(const FilePath& projectFilePath,
                      "version of RStudio";
        return systemError(boost::system::errc::protocol_error,
                           ERROR_LOCATION);
+   }
+
+   // extract R version
+   it = dcfFields.find("RVersion");
+   if (it != dcfFields.end())
+   {
+      if (!interpretRVersionValue(it->second, &(pConfig->rVersion)))
+         return requiredFieldError("RVersion", pUserErrMsg);
+   }
+   else
+   {
+      pConfig->rVersion = defaultConfig.rVersion;
    }
 
    // extract restore workspace
@@ -563,24 +630,31 @@ Error writeProjectFile(const FilePath& projectFilePath,
                        const RProjectBuildDefaults& buildDefaults,
                        const RProjectConfig& config)
 {  
+   // build version field if necessary
+   std::string rVersion;
+   if (!config.rVersion.isDefault())
+      rVersion = "RVersion: " + rVersionAsString(config.rVersion) + "\n\n";
+
    // generate project file contents
    boost::format fmt(
       "Version: %1%\n"
       "\n"
-      "RestoreWorkspace: %2%\n"
-      "SaveWorkspace: %3%\n"
-      "AlwaysSaveHistory: %4%\n"
+      "%2%"
+      "RestoreWorkspace: %3%\n"
+      "SaveWorkspace: %4%\n"
+      "AlwaysSaveHistory: %5%\n"
       "\n"
-      "EnableCodeIndexing: %5%\n"
-      "UseSpacesForTab: %6%\n"
-      "NumSpacesForTab: %7%\n"
-      "Encoding: %8%\n"
+      "EnableCodeIndexing: %6%\n"
+      "UseSpacesForTab: %7%\n"
+      "NumSpacesForTab: %8%\n"
+      "Encoding: %9%\n"
       "\n"
-      "RnwWeave: %9%\n"
-      "LaTeX: %10%\n");
+      "RnwWeave: %10%\n"
+      "LaTeX: %11%\n");
 
    std::string contents = boost::str(fmt %
         boost::io::group(std::fixed, std::setprecision(1), config.version) %
+        rVersion %
         yesNoAskValueToString(config.restoreWorkspace) %
         yesNoAskValueToString(config.saveWorkspace) %
         yesNoAskValueToString(config.alwaysSaveHistory) %
@@ -782,6 +856,7 @@ bool updateSetPackageInstallArgsDefault(RProjectConfig* pConfig)
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 

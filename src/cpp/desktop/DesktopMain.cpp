@@ -15,6 +15,7 @@
 
 #include <QtGui>
 #include <QtWebKit>
+#include <QPushButton>
 
 #include <boost/bind.hpp>
 #include <boost/function.hpp>
@@ -31,6 +32,7 @@
 #include <core/system/System.hpp>
 #include <core/system/Environment.hpp>
 #include <core/r_util/RProjectFile.hpp>
+#include <core/r_util/RSessionContext.hpp>
 
 #include "DesktopApplicationLaunch.hpp"
 #include "DesktopSlotBinders.hpp"
@@ -38,12 +40,14 @@
 #include "DesktopOptions.hpp"
 #include "DesktopUtils.hpp"
 #include "DesktopSessionLauncher.hpp"
+#include "DesktopProgressActivator.hpp"
 
 QProcess* pRSessionProcess;
 QString sharedSecret;
 
-using namespace core;
-using namespace desktop;
+using namespace rstudio;
+using namespace rstudio::core;
+using namespace rstudio::desktop;
 
 namespace {
 
@@ -119,12 +123,12 @@ void initializeWorkingDirectory(int argc,
 
    // set the working dir if we have one
    if (!workingDir.empty())
-      core::system::setenv("RS_INITIAL_WD", workingDir);
+      core::system::setenv(kRStudioInitialWorkingDir, workingDir);
 }
 
 void setInitialProject(const FilePath& projectFile, QString* pFilename)
 {
-   core::system::setenv("RS_INITIAL_PROJECT", projectFile.absolutePath());
+   core::system::setenv(kRStudioInitialProject, projectFile.absolutePath());
    pFilename->clear();
 }
 
@@ -155,8 +159,8 @@ void initializeStartupEnvironment(QString* pFilename)
          setInitialProject(filePath, pFilename);
       }
       else if (ext == ".rdata" || ext == ".rda")
-      {   
-         core::system::setenv("RS_INITIAL_ENV", filePath.absolutePath());
+      {
+         core::system::setenv(kRStudioInitialEnvironment, filePath.absolutePath());
          pFilename->clear();
       }
 
@@ -193,7 +197,6 @@ int main(int argc, char* argv[])
    try
    {
       initializeLang();
-      QTextCodec::setCodecForCStrings(QTextCodec::codecForName("UTF-8"));
 
       // initialize log
       core::system::initializeLog("rdesktop",
@@ -214,7 +217,7 @@ int main(int argc, char* argv[])
 
       boost::scoped_ptr<QApplication> pApp;
       boost::scoped_ptr<ApplicationLaunch> pAppLaunch;
-      ApplicationLaunch::init(QString::fromAscii("RStudio"),
+      ApplicationLaunch::init(QString::fromUtf8("RStudio"),
                               argc,
                               argv,
                               &pApp,
@@ -239,7 +242,7 @@ int main(int argc, char* argv[])
          if (pApp->arguments().size() > 1)
          {
             QString arg = pApp->arguments().last();
-            if (arg != QString::fromAscii(kRunDiagnosticsOption))
+            if (arg != QString::fromUtf8(kRunDiagnosticsOption))
                filename = verifyAndNormalizeFilename(arg);
          }
       }
@@ -340,6 +343,8 @@ int main(int argc, char* argv[])
       error = sessionLauncher.launchFirstSession(filename, pAppLaunch.get());
       if (!error)
       {
+         ProgressActivator progressActivator;
+
          int result = pApp->exec();
 
          sessionLauncher.cleanupAtExit();

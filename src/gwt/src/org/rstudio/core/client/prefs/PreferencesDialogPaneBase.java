@@ -97,6 +97,12 @@ implements HasEnsureVisibleHandlers
          return widget;
       }
    }
+   
+   protected Widget spacedBefore(Widget widget)
+   {
+      widget.addStyleName(res_.styles().spacedBefore());
+      return widget;
+   }
 
    protected Widget spaced(Widget widget)
    {
@@ -115,6 +121,12 @@ implements HasEnsureVisibleHandlers
       widget.addStyleName(res_.styles().nudgeRight());
       return widget;
    }
+   
+   protected Widget nudgeRightPlus(Widget widget)
+   {
+      widget.addStyleName(res_.styles().nudgeRightPlus());
+      return widget;
+   }
 
    protected Widget textBoxWithChooser(Widget widget)
    {
@@ -125,6 +137,11 @@ implements HasEnsureVisibleHandlers
    protected void forceClosed(Command onClosed)
    {
       dialog_.forceClosed(onClosed);
+   }
+   
+   protected PreferencesDialogBaseResources res() 
+   {
+      return res_;
    }
    
    void setDialog(PreferencesDialogBase<T> dialog)

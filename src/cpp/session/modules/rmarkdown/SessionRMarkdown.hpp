@@ -16,21 +16,24 @@
 #ifndef SESSION_SESSION_RMARKDOWN_HPP
 #define SESSION_SESSION_RMARKDOWN_HPP
 
+namespace rstudio {
 namespace core {
    class Error;
 }
+}
  
+namespace rstudio {
 namespace session {
 namespace modules {      
 namespace rmarkdown {
 
 bool rmarkdownPackageAvailable();
-bool canRenderShinyDocs();
 
 core::Error initialize();
 
 } // namespace rmarkdown
 } // namepace handlers
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_RMARKDOWN_HPP

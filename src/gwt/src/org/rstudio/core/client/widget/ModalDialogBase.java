@@ -27,6 +27,7 @@ import com.google.gwt.user.client.Event;
 import com.google.gwt.user.client.Timer;
 import com.google.gwt.user.client.ui.*;
 import com.google.gwt.user.client.ui.HasHorizontalAlignment.HorizontalAlignmentConstant;
+
 import org.rstudio.core.client.Point;
 import org.rstudio.core.client.command.ShortcutManager;
 import org.rstudio.core.client.command.ShortcutManager.Handle;
@@ -285,6 +286,15 @@ public abstract class ModalDialogBase extends DialogBox
       allButtons_.add(button);
    }
    
+   // inserts an action button--in the same panel as OK/cancel, but preceding
+   // them (presuming they're already present)
+   protected void addActionButton(ThemedButton button)
+   {
+      button.addStyleDependentName("DialogAction");
+      buttonPanel_.insert(button, 0);
+      allButtons_.add(button);
+   }
+   
    protected void setButtonAlignment(HorizontalAlignmentConstant alignment)
    {
       bottomPanel_.setCellHorizontalAlignment(buttonPanel_, alignment);
@@ -416,6 +426,12 @@ public abstract class ModalDialogBase extends DialogBox
          switch (nativeEvent.getKeyCode())
          {
             case KeyCodes.KEY_ENTER:
+               
+               // allow Enter on textareas
+               Element e = DomUtils.getActiveElement();
+               if (e.hasTagName("TEXTAREA"))
+                  return;
+               
                ThemedButton defaultButton = defaultOverrideButton_ == null
                                             ? okButton_
                                             : defaultOverrideButton_;

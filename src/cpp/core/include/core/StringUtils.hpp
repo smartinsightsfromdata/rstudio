@@ -20,6 +20,7 @@
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
 
+namespace rstudio {
 namespace core {
 namespace string_utils {
 
@@ -29,6 +30,31 @@ enum LineEnding {
    LineEndingNative,
    LineEndingPassthrough
 };
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   bool caseInsensitive);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n,
+                   bool caseInsensitive);
+
+bool isSubsequence(std::string const& self,
+                   std::string const& other,
+                   std::string::size_type other_n);
+
+std::vector<int> subsequenceIndices(std::string const& sequence,
+                                    std::string const& query);
+
+bool subsequenceIndices(std::string const& sequence,
+                        std::string const& query,
+                        std::vector<int> *pIndices);
+
+std::string getExtension(std::string const& str);
 
 std::string utf8ToSystem(const std::string& str,
                          bool escapeInvalidChars=false);
@@ -173,9 +199,28 @@ inline bool stringNotEmpty(const std::string& str)
 void trimLeadingLines(int maxLines, std::string* pLines);
 
 void stripQuotes(std::string* pStr);
+std::string strippedOfQuotes(const std::string& str);
+
+std::string strippedOfBackQuotes(const std::string& string);
+
+std::size_t countNewlines(const std::wstring& string);
+std::size_t countNewlines(const std::string& string);
+
+std::size_t countNewlines(std::string::iterator begin,
+                          std::string::iterator end);
+
+std::size_t countNewlines(std::wstring::iterator begin,
+                          std::wstring::iterator end);
+
+std::wstring::const_iterator countNewlines(std::wstring::const_iterator begin,
+                                           std::wstring::const_iterator end,
+                                           std::size_t* pCount);
+
+bool isPrefixOf(const std::string& self, const std::string& prefix);
 
 } // namespace string_utils
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_STRING_UTILS_HPP
 

@@ -661,10 +661,7 @@ public class EnvironmentPresenter extends BasePresenter
                                 (FilePosition) currentBrowsePosition_.cast(),
                                 FileTypeRegistry.R,
                                 debugging ? 
-                                      (contextDepth_ == 1 ?
-                                         NavigationMethod.DebugStep :
-                                         NavigationMethod.DebugFrame)
-                                      :
+                                      NavigationMethod.DebugStep :
                                       NavigationMethod.DebugEnd));
       }
 
@@ -746,7 +743,8 @@ public class EnvironmentPresenter extends BasePresenter
          @Override
          public void onError(ServerError error)
          {
-            if (!workbenchContext_.isRestartInProgress())
+            if (!workbenchContext_.isRestartInProgress() &&
+                (error.getCode() != ServerError.TRANSMISSION))
             {
                globalDisplay_.showErrorMessage("Error Listing Objects",
                                                error.getUserMessage());

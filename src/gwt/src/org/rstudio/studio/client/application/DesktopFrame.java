@@ -48,10 +48,25 @@ public interface DesktopFrame extends JavaScriptPassthrough
    void activateMinimalWindow(String name);
    void activateSatelliteWindow(String name);
    void prepareForSatelliteWindow(String name, int width, int height);
+   void prepareForNamedWindow(String name, boolean allowExternalNavigation,
+         boolean showDesktopToolbar);
+   void closeNamedWindow(String name);
+   
+   // interface for plot export where coordinates are specified relative to
+   // the iframe where the image is located within
    void copyImageToClipboard(int clientLeft,
                              int clientTop,
                              int clientWidth,
                              int clientHeight);
+   
+   void copyPageRegionToClipboard(int left, int top, int width, int height);
+   
+   void exportPageRegionToFile(String targetPath, 
+                               String format, 
+                               int left, 
+                               int top, 
+                               int width, 
+                               int height);
    
    boolean supportsClipboardMetafile();
 
@@ -79,7 +94,7 @@ public interface DesktopFrame extends JavaScriptPassthrough
    String chooseRVersion();
    boolean canChooseRVersion();
 
-   boolean isRetina();
+   double devicePixelRatio();
    
    void cleanClipboard();
    
@@ -126,6 +141,7 @@ public interface DesktopFrame extends JavaScriptPassthrough
    void reloadZoomWindow();
    
    void setViewerUrl(String url);
+   void reloadViewerZoomWindow(String url);
    
    boolean isOSXMavericks();
 
@@ -134,4 +150,6 @@ public interface DesktopFrame extends JavaScriptPassthrough
    void setBusy(boolean busy);
    
    void setWindowTitle(String title);
+   
+   void installRtools(String version, String installerPath);
 }

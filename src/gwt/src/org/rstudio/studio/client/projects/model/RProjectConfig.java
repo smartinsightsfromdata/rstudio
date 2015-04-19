@@ -40,6 +40,14 @@ public class RProjectConfig extends JavaScriptObject
    public native final double getVersion() /*-{
       return this.version;
    }-*/;
+   
+   public native final RProjectRVersion getRVersion() /*-{
+      return this.r_version;
+   }-*/;
+   
+   public native final void setRVersion(RProjectRVersion rVersion) /*-{
+      this.r_version = rVersion;
+   }-*/;
 
    public native final int getRestoreWorkspace() /*-{
       return this.restore_workspace;
@@ -220,9 +228,15 @@ public class RProjectConfig extends JavaScriptObject
       return getPackageRoxygenize(ROXYGENIZE_COLLATE);
    }
    
+   public final boolean getPackageRoxygenizeVignette()
+   {
+      return getPackageRoxygenize(ROXYGENIZE_VIGNETTE);
+   }
+   
    public final void setPackageRoxygenize(boolean rd,
                                           boolean collate,
-                                          boolean namespace)
+                                          boolean namespace,
+                                          boolean vignette)
    {
       ArrayList<String> roclets = new ArrayList<String>();
       if (rd)
@@ -231,6 +245,8 @@ public class RProjectConfig extends JavaScriptObject
          roclets.add(ROXYGENIZE_COLLATE);
       if (namespace)
          roclets.add(ROXYGENIZE_NAMESPACE);
+      if (vignette)
+         roclets.add(ROXYGENIZE_VIGNETTE);
       
       String roxygenize = StringUtil.join(roclets, ROXYGENIZE_DELIM);
       setPackageRoxygenizeNative(roxygenize);
@@ -239,6 +255,7 @@ public class RProjectConfig extends JavaScriptObject
    private static final String ROXYGENIZE_RD = "rd";
    private static final String ROXYGENIZE_COLLATE = "collate";
    private static final String ROXYGENIZE_NAMESPACE = "namespace";
+   private static final String ROXYGENIZE_VIGNETTE = "vignette";
    private static final String ROXYGENIZE_DELIM = ",";
  
    private final boolean getPackageRoxygenize(String roclet)

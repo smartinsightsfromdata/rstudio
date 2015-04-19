@@ -16,8 +16,11 @@
 #ifndef CORE_JSON_JSON_RPC_HPP
 #define CORE_JSON_JSON_RPC_HPP
 
+#include <core/type_traits/TypeTraits.hpp>
+
 #include <boost/system/error_code.hpp>
 
+namespace rstudio {
 namespace core {
 namespace json {
 namespace errc {
@@ -58,11 +61,12 @@ enum errc_t {
 } // namespace errc
 } // namespace json
 } // namespace core
+} // namespace rstudio
 
 namespace boost {
 namespace system {
 template <>
-struct is_error_code_enum<core::json::errc::errc_t>
+struct is_error_code_enum<rstudio::core::json::errc::errc_t>
  { static const bool value = true; };
 } // namespace system
 } // namespace boost
@@ -79,12 +83,15 @@ struct is_error_code_enum<core::json::errc::errc_t>
 #include <core/Error.hpp>
 #include <core/json/Json.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
    class Response ;
 }
 }
+}
 
+namespace rstudio {
 namespace core {
 namespace json {
 
@@ -115,7 +122,9 @@ inline boost::system::error_condition make_error_condition( errc_t e )
 } // namespace errc
 } // namespace json
 } // namespace core
+} // namespace rstudio
 
+namespace rstudio {
 namespace core {
 namespace json {
 
@@ -403,19 +412,48 @@ core::Error readParams(const json::Array& params,
    return readParam(params, 10, pValue11) ;
 }
 
+namespace errors {
+
+inline Error paramMissing(const std::string& name,
+                          const ErrorLocation& location)
+{
+   Error error(errc::ParamTypeMismatch, location);
+   error.addProperty("description", "no such parameter '" + name + "'");
+   return error;
+}
+
+inline Error typeMismatch(const json::Value& value,
+                          const json_spirit::Value_type expectedType,
+                          const ErrorLocation& location)
+{
+   Error error(errc::ParamTypeMismatch, location);
+   
+   std::string description = std::string("expected ") +
+         "'" + json::typeAsString(expectedType) + "'" +
+         "; got " +
+         "'" + json::typeAsString(value.type()) + "'";
+   error.addProperty("description", description);
+   return error;
+}
+
+} // namespace errors
+
 template <typename T>
 core::Error readObject(const json::Object& object, 
                        const std::string& name, 
                        T* pValue)
 {
-   json::Object::const_iterator it = object.find(name) ;
+   json::Object::const_iterator it = object.find(name);
    if (it == object.end())
-      return Error(errc::ParamMissing, ERROR_LOCATION) ;
+      return errors::paramMissing(name, ERROR_LOCATION);
 
    if (!isType<T>(it->second))
-      return Error(errc::ParamTypeMismatch, ERROR_LOCATION) ;
+      return errors::typeMismatch(
+               it->second,
+               json::asJsonType(*pValue),
+               ERROR_LOCATION);
 
-   *pValue = it->second.get_value<T>() ;
+   *pValue = it->second.get_value<T>();
 
    return Success() ;
 }
@@ -434,7 +472,10 @@ core::Error readObject(const json::Object& object,
    }
 
    if (!isType<T>(it->second))
-      return Error(errc::ParamTypeMismatch, ERROR_LOCATION) ;
+      return errors::typeMismatch(
+               it->second,
+               json::asJsonType(*pValue),
+               ERROR_LOCATION);
 
    *pValue = it->second.get_value<T>() ;
 
@@ -1030,6 +1071,7 @@ JsonRpcAsyncMethod adaptMethodToAsync(JsonRpcMethod synchronousMethod);
 
 } // namespace json
 } // namespace core
+} // namespace rstudio
 
 
 

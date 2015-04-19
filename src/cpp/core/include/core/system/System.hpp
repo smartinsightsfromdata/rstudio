@@ -39,6 +39,7 @@ typedef pid_t PidType;
 
 #include <core/system/Types.hpp>
 
+namespace rstudio {
 namespace core {
 
 class FileInfo;
@@ -56,6 +57,7 @@ enum LogLevel
 
 // portable realPath
 Error realPath(const FilePath& filePath, FilePath* pRealPath);
+bool realPathsEqual(const FilePath& a, const FilePath& b);
 
 void addToSystemPath(const FilePath& path, bool prepend = false);
 
@@ -266,6 +268,7 @@ Error terminateProcess(PidType pid);
    
 } // namespace system
 } // namespace core 
+} // namespace rstudio
 
 #endif // CORE_SYSTEM_SYSTEM_HPP
 

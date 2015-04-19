@@ -21,6 +21,7 @@
 
 #include <session/SessionAsyncRProcess.hpp>
 
+namespace rstudio {
 namespace session {
 namespace async_r {
 
@@ -31,7 +32,9 @@ AsyncRProcess::AsyncRProcess():
 }
 
 void AsyncRProcess::start(const char* rCommand, 
-                          const core::FilePath& workingDir)
+                          const core::FilePath& workingDir, 
+                          AsyncRProcessOptions rOptions,
+                          std::vector<core::FilePath> rSourceFiles)
 {
    // R binary
    core::FilePath rProgramPath;
@@ -42,18 +45,81 @@ void AsyncRProcess::start(const char* rCommand,
       onCompleted(EXIT_FAILURE);
       return;
    }
+   
+   // core R files for augmented async processes
+   if (rOptions & R_PROCESS_AUGMENTED)
+   {
+      // R files we wish to source to provide functionality to async process
+      const core::FilePath modulesPath =
+            session::options().modulesRSourcePath();
+      
+      const core::FilePath rPath =
+            session::options().coreRSourcePath();
+      
+      const core::FilePath rTools =  rPath.childPath("Tools.R");
+      const core::FilePath sessionCodeTools = modulesPath.childPath("SessionCodeTools.R");
+      const core::FilePath sessionRCompletions = modulesPath.childPath("SessionRCompletions.R");
+      
+      rSourceFiles.push_back(rTools);
+      rSourceFiles.push_back(sessionCodeTools);
+      rSourceFiles.push_back(sessionRCompletions);
+   }
 
    // args
    std::vector<std::string> args;
    args.push_back("--slave");
-   args.push_back("--vanilla");
+   if (rOptions & R_PROCESS_VANILLA)
+      args.push_back("--vanilla");
+   if (rOptions & R_PROCESS_NO_RDATA)
+   {
+      args.push_back("--no-save");
+      args.push_back("--no-restore");
+   }
    args.push_back("-e");
-   args.push_back(rCommand);
+   
+   bool needsQuote = false;
+
+   // On Windows, we turn the vector of strings into a single
+   // string to send over the command line, so we must ensure
+   // that the arguments following '-e' are quoted, so that
+   // they are all interpretted as a single argument (rather
+   // than multiple arguments) to '-e'.
+
+#ifdef _WIN32
+   needsQuote = strlen(rCommand) > 0 && rCommand[0] != '"';
+#endif
+
+   std::stringstream command;
+   if (needsQuote)
+      command << "\"";
+
+   if (rSourceFiles.size())
+   {
+      // add in the r source files requested
+      for (std::vector<core::FilePath>::const_iterator it = rSourceFiles.begin();
+           it != rSourceFiles.end();
+           ++it)
+      {
+         command << "source('" << it->absolutePath() << "');";
+      }
+      
+      command << rCommand;
+   }
+   else
+   {
+      command << rCommand;
+   }
+
+   if (needsQuote)
+      command << "\"";
+
+   args.push_back(command.str());
 
    // options
    core::system::ProcessOptions options;
    options.terminateChildren = true;
-   options.redirectStdErrToStdOut = redirectStdErrToStdOut();
+   if (rOptions & R_PROCESS_REDIRECTSTDERR)
+      options.redirectStdErrToStdOut = true;
 
    // if a working directory was specified, use it
    if (!workingDir.empty())
@@ -137,15 +203,11 @@ void AsyncRProcess::markCompleted()
    isRunning_ = false;
 }
 
-bool AsyncRProcess::redirectStdErrToStdOut()
-{
-   return false;
-}
-
 AsyncRProcess::~AsyncRProcess()
 {
 }
 
 } // namespace async_r
 } // namespace session
+} // namespace rstudio
 

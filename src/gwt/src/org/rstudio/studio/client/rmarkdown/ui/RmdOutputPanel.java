@@ -32,6 +32,7 @@ import com.google.gwt.user.client.ui.Widget;
 import com.google.inject.Inject;
 
 import org.rstudio.core.client.FilePosition;
+import org.rstudio.core.client.ScrollUtil;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.dom.IFrameElementEx;
 import org.rstudio.core.client.dom.WindowEx;
@@ -49,9 +50,11 @@ import org.rstudio.core.client.widget.ToolbarLabel;
 import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.rmarkdown.model.RMarkdownServerOperations;
 import org.rstudio.studio.client.rmarkdown.model.RmdPreviewParams;
-import org.rstudio.studio.client.shiny.ShinyApps;
+import org.rstudio.studio.client.rsconnect.RSConnect;
+import org.rstudio.studio.client.rsconnect.events.RSConnectActionEvent;
 import org.rstudio.studio.client.shiny.ShinyFrameHelper;
 import org.rstudio.studio.client.workbench.commands.Commands;
+import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.filetypes.FileTypeRegistry;
 import org.rstudio.studio.client.common.presentation.SlideNavigationMenu;
 import org.rstudio.studio.client.common.presentation.SlideNavigationToolbarMenu;
@@ -59,6 +62,7 @@ import org.rstudio.studio.client.common.presentation.events.SlideIndexChangedEve
 import org.rstudio.studio.client.common.presentation.events.SlideNavigationChangedEvent;
 import org.rstudio.studio.client.common.presentation.events.SlideNavigationChangedEvent.Handler;
 import org.rstudio.studio.client.common.presentation.model.SlideNavigation;
+import org.rstudio.studio.client.common.satellite.Satellite;
 
 public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
                             implements RmdOutputPresenter.Display
@@ -66,18 +70,29 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
    @Inject
    public RmdOutputPanel(Commands commands, 
                          FileTypeRegistry fileTypeRegistry,
-                         RMarkdownServerOperations server)
+                         RMarkdownServerOperations server,
+                         EventBus events, 
+                         RSConnect rsconnect,
+                         Satellite satellite)
    {
       super(commands);
       fileTypeRegistry_ = fileTypeRegistry;
       server_ = server;
       shinyFrame_ = new ShinyFrameHelper();
+      events_ = events;
+      
+      // if this window is a satellite, ensure that the rsconnect instance
+      // is initialized
+      rsconnect.ensureSessionInit();
    }
    
    @Override
    public void showOutput(RmdPreviewParams params, boolean enablePublish, 
                           boolean enableDeploy, boolean refresh)
    {
+      // remember output parameters
+      outputParms_ = params;
+
       // remember target file (for invoking editor)
       targetFile_ = FileSystemItem.createFile(params.getTargetFile());
       
@@ -111,14 +126,11 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       publishButton_.setText(params.getResult().getRpubsPublished() ? 
             "Republish" : "Publish");
       publishButton_.setVisible(showPublish);
-      publishButtonSeparator_.setVisible(showPublish);
       
-      // ShinyApps
-      boolean showDeploy = enableDeploy && 
-            (params.getResult().isHtml() || params.isShinyDocument());
+      // RSConnect
+      boolean showDeploy = enableDeploy && params.isShinyDocument();
       deployButton_.setVisible(showDeploy);
-      deployButton_.setText("Deploy");
-      deployButtonSeparator_.setVisible(showDeploy);
+      deployButton_.setText("Publish");
       
       // find text box
       boolean showFind = params.getResult().isHtml() && 
@@ -130,37 +142,18 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       scrollPosition_ = refresh ? 
             getScrollPosition() : params.getScrollPosition();
      
+      // get the URL to load
+      String url = getDocumentUrl();
+
       // check for an anchor implied by a preview_slide field
       String anchor = "";
       if (params.getResult().getPreviewSlide() > 0)
          anchor = String.valueOf(params.getResult().getPreviewSlide());
             
-      // load url      
-      String url;
-      if (refresh)
-      {
-         url = getCurrentUrl();
-         
-         // if there's an anchor then strip any anchor we already have
-         if (anchor.length() > 0)
-         {
-            int anchorPos = url.lastIndexOf('#');
-            if (anchorPos != -1)
-               url = url.substring(0, anchorPos);
-         }
-      }
-      else
-      {
-         if (isShiny_)
-            url = shinyUrl_;
-         else
-            url = server_.getApplicationURL(params.getOutputUrl());
-         
-         // check for an explicit anchor if there wasn't one implied
-         // by the preview_slide
-         if (anchor.length() == 0)
-            anchor = params.getAnchor();
-      }
+      // check for an explicit anchor if there wasn't one implied
+      // by the preview_slide
+      if (anchor.length() == 0)
+         anchor = params.getAnchor();
       
       // add the anchor if necessary
       if (anchor.length() > 0)
@@ -186,29 +179,13 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
             commands.viewerPopout().createToolbarButton();
       popoutButton.setText("Open in Browser");
       toolbar.addLeftWidget(popoutButton);
-      publishButtonSeparator_ = toolbar.addLeftSeparator();
-      publishButton_ = commands.publishHTML().createToolbarButton(false);
-      toolbar.addLeftWidget(publishButton_);
-
-      deployButtonSeparator_ = toolbar.addLeftSeparator();
-      deployButton_ = new ToolbarButton("Deploy", 
-            commands.shinyAppsDeploy().getImageResource(), 
-            new ClickHandler()
-      {
-         @Override
-         public void onClick(ClickEvent evt)
-         {
-            if (targetFile_ != null)
-              ShinyApps.deployFromSatellite(targetFile_.getPath());
-         }
-      });
-      toolbar.addLeftWidget(deployButton_);
 
       findTextBox_ = new FindTextBox("Find");
       findTextBox_.setIconVisible(true);
       findTextBox_.setOverrideWidth(120);
       findTextBox_.getElement().getStyle().setMarginRight(6, Unit.PX);
-      toolbar.addRightWidget(findTextBox_);
+      findSeparator_ = toolbar.addLeftSeparator();
+      toolbar.addLeftWidget(findTextBox_);
       
       findTextBox_.addKeyDownHandler(new KeyDownHandler() {
          @Override
@@ -246,10 +223,26 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
          }
          
       });
-      toolbar.addRightWidget(findTextBox_);
-      findSeparator_ = toolbar.addRightSeparator();
       
-      toolbar.addRightWidget(commands.viewerRefresh().createToolbarButton());
+      toolbar.addLeftSeparator();
+      toolbar.addLeftWidget(commands.viewerRefresh().createToolbarButton());
+      
+      publishButton_ = commands.publishHTML().createToolbarButton(false);
+      toolbar.addRightWidget(publishButton_);
+
+      deployButton_ = new ToolbarButton("Publish", 
+            commands.rsconnectDeploy().getImageResource(), 
+            new ClickHandler()
+      {
+         @Override
+         public void onClick(ClickEvent evt)
+         {
+            events_.fireEvent(new RSConnectActionEvent(
+                  RSConnectActionEvent.ACTION_TYPE_DEPLOY, 
+                  targetFile_.getPath()));
+         }
+      });
+      toolbar.addRightWidget(deployButton_);
    }
    
    @Override
@@ -317,7 +310,7 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
                
                // Even though the document exists, it may not have rendered all
                // its content yet
-               setScrollPositionOnLoad();
+               ScrollUtil.setScrollPositionOnLoad(frame, scrollPosition_);
 
                return false;
             }
@@ -350,12 +343,19 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       // cache the scroll position, so we can re-apply it when the page loads
       scrollPosition_ = getScrollPosition();
       
+      // recompute the URL (we can't pick up the URL from the document since 
+      // it may have encoding problems--see case 3994)
+      String url = getDocumentUrl();
+      String anchor = getAnchor();
+      if (anchor.length() > 0)
+         url += "#" + anchor;
+      
       // re-initialize the shiny frame with the URL (so it waits for the new 
       // window object to become available after refresh)
       if (isShiny_)
-         shinyFrame_.initialize(getCurrentUrl(), null);
+         shinyFrame_.initialize(url, null);
 
-      showUrl(getCurrentUrl());
+      showUrl(url);
    }
 
    @Override
@@ -395,18 +395,12 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
    public void navigate(int index)
    {
       getFrame().getIFrame().focus();
-      
-      String url = getCurrentUrl();
-      int anchorPos = url.lastIndexOf("#");
-      if (anchorPos > 0)
-         url = url.substring(0, anchorPos);
-      
-      String hash = "" + (index + 1);
+      String hash = getSlideAnchor(index + 1);
 
       if (isShiny_)
          shinyFrame_.setHash(hash);
       else
-         showUrl(url + "#" + hash);
+         showUrl(getDocumentUrl() + "#" + hash);
    }
 
    @Override
@@ -478,6 +472,11 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
          String anchor = getAnchor();
          if (anchor.length() == 0)
             anchor = "1";
+         
+         // remove parens if necessary
+         anchor = anchor.replaceAll("[()]","");
+         
+         // return index
          return Integer.parseInt(anchor) - 1;
       }
       catch(NumberFormatException e)
@@ -486,53 +485,38 @@ public class RmdOutputPanel extends SatelliteFramePanel<AnchorableFrame>
       }
    }
    
-   private void setScrollPositionOnLoad()
+   private String getDocumentUrl() 
    {
-      Scheduler.get().scheduleFixedDelay(new RepeatingCommand() {
-         @Override
-         public boolean execute()
-         {
-            // check to see whether the document has finished loading--
-            // we don't want to apply the scroll position until all content
-            // has been fully rendered
-            Document doc = getFrame().getIFrame().getContentDocument();
-            String readyState = getDocumentReadyState(doc);
-            if (readyState == null)
-               return false;
-            
-            if (!readyState.equals("complete"))
-               return true;
-
-            // restore scroll position
-            if (scrollPosition_ > 0)
-               doc.setScrollTop(scrollPosition_);
-
-            return false;
-         }
-      }, 50);
+      return isShiny_ ?
+            shinyUrl_ :
+            server_.getApplicationURL(outputParms_.getOutputUrl());
    }
    
-   private final native String getDocumentReadyState(Document doc) /*-{
-      return doc.readyState || null;
-   }-*/;
+   private String getSlideAnchor(int index)
+   {
+      if (slideNavigation_.getUseAnchorParens())
+         return "(" + index + ")"; 
+      else
+         return "" + index;
+   }
    
    private SlideNavigationToolbarMenu slideNavigationMenu_;
 
    private Label fileLabel_;
    private Widget fileLabelSeparator_;
    private ToolbarButton publishButton_;
-   private Widget publishButtonSeparator_;
    private ToolbarButton deployButton_;
-   private Widget deployButtonSeparator_;
    private String title_;
    
-   private FileTypeRegistry fileTypeRegistry_;
-   
-   private RMarkdownServerOperations server_;
+   private final FileTypeRegistry fileTypeRegistry_;
+   private final RMarkdownServerOperations server_;
+   private final EventBus events_;
+
    private int scrollPosition_ = 0;
    
    private FileSystemItem targetFile_ = null;
    private SlideNavigation slideNavigation_ = null;
+   private RmdPreviewParams outputParms_ = null;
    
    private FindTextBox findTextBox_;
    private Widget findSeparator_;

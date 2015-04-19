@@ -14,18 +14,32 @@
  */
 package org.rstudio.studio.client.rmarkdown.model;
 
+import com.google.gwt.regexp.shared.MatchResult;
+import com.google.gwt.regexp.shared.RegExp;
+
 public class YamlFrontMatter
 {
    public static int[] getFrontMatterRange(String code)
    {
-      String separator = RmdFrontMatter.FRONTMATTER_SEPARATOR;
-      int beginPos = code.indexOf(separator) + separator.length();
-      if (beginPos < 0)
+      RegExp frontMatterReg = RegExp.compile("^---\\s*$", "gm");
+      MatchResult beginMatch = frontMatterReg.exec(code);
+      if (beginMatch == null)
          return null;
-      int endPos = code.indexOf(separator, beginPos);
-      if (endPos < 0)
+
+      // ensure that only whitespace exists before the beginning --- 
+      // (this matches front matter extraction behavior in the R Markdown
+      // package)
+      if (!code.substring(0, beginMatch.getIndex()).matches("\\s*")) 
          return null;
-      return new int[] { beginPos, endPos };
+      
+      MatchResult endMatch = frontMatterReg.exec(code);
+      if (endMatch == null)
+         return null;
+
+      // the YAML range extends one character past the end of the first match
+      // (i.e. after the newline) up to the second match
+      return new int[] { beginMatch.getIndex() + beginMatch.getGroup(0).length() + 1, 
+            endMatch.getIndex() };
    }
    
    public static String getFrontMatter(String code)

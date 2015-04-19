@@ -23,8 +23,9 @@
 #include <session/SessionOptions.hpp>
 #include <session/SessionModuleContext.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {  
 
 namespace {
@@ -114,4 +115,16 @@ void PersistentState::setActiveEnvironmentName(std::string environmentName)
    settings_.set("activeEnvironmentName", environmentName);
 }
 
+std::string PersistentState::getStoredHash(const std::string& hashName) const
+{
+   return settings_.get(hashName + "Hash", "");
+}
+
+void PersistentState::setStoredHash(const std::string& hashName, 
+                                    const std::string& hashValue)
+{
+   settings_.set(hashName + "Hash", hashValue);
+}
+
 } // namespace session
+} // namespace rstudio

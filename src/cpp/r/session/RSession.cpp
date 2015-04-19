@@ -70,8 +70,9 @@ extern "C" SA_TYPE SaveAction;
 // constants for graphics scratch subdirectory
 #define kGraphicsPath "graphics"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace r {
 namespace session {
 
@@ -388,6 +389,12 @@ Error initialize()
    Error error = r::sourceManager().sourceTools(toolsFilePath);
    if (error)
       return error ;
+
+   // install RStudio API
+   FilePath apiFilePath = s_options.rSourcePath.complete("Api.R");
+   error = r::sourceManager().sourceTools(apiFilePath);
+   if (error)
+      return error;
 
    // initialize graphics device -- use a stable directory for server mode
    // and temp directory for desktop mode (so that we can support multiple
@@ -744,11 +751,19 @@ int RReadConsole (const char *pmt,
          return 0; // terminate
       }
    }
-   catch(r::exec::InterruptException)
+   catch(r::exec::InterruptException&)
    {
-      // this will result in a longjmp
+      // set interrupts pending
       r::exec::setInterruptsPending(true);
+
+      // only issue an interrupt when not on Windows -- let the regular
+      // event loop handle interrupts there. note that this will longjmp
+#ifndef _WIN32
       r::exec::checkUserInterrupt();
+#endif
+
+      // return success
+      return 1;
    }
    catch(const std::exception& e)
    {
@@ -1388,7 +1403,9 @@ Error run(const ROptions& options, const RCallbacks& callbacks)
    else
    {
       loadInitFile = !s_suspendedSessionPath.exists()
-                     || options.rProfileOnResume;
+                     || options.rProfileOnResume
+                     || r::session::state::packratModeEnabled(
+                                                s_suspendedSessionPath);
    }
 
    // quiet for resume cases
@@ -1486,7 +1503,8 @@ bool isSuspendable(const std::string& currentPrompt)
 bool suspend(const RSuspendOptions& options,
              const FilePath& suspendedSessionPath,
              bool disableSaveCompression,
-             bool force)
+             bool force,
+             int status = EXIT_SUCCESS)
 {
    // validate that force == true if disableSaveCompression is specified
    // this is because save compression is disabled and the previous options
@@ -1529,7 +1547,7 @@ bool suspend(const RSuspendOptions& options,
    
       // clean up but don't save workspace or runLast because we have
       // been suspended
-      RCleanUp(SA_NOSAVE, 0, FALSE);
+      RCleanUp(SA_NOSAVE, status, FALSE);
       
       // keep compiler happy (this line will never execute)
       return true;
@@ -1551,7 +1569,8 @@ void suspendForRestart(const RSuspendOptions& options)
            RestartContext::createSessionStatePath(s_options.scopedScratchPath,
                                                   s_options.sessionPort),
            true,  // disable save compression
-           true); // force suspend
+           true,  // force suspend
+           EX_CONTINUE);
 }
 
 // set save action
@@ -1592,7 +1611,7 @@ bool browserContextActive()
    return Rf_countContexts(CTXT_BROWSER, 1) > 0;
 }
    
-void quit(bool saveWorkspace)
+void quit(bool saveWorkspace, int status)
 {
    // invoke quit
    std::string save = saveWorkspace ? "yes" : "no";
@@ -1605,7 +1624,7 @@ void quit(bool saveWorkspace)
       LOG_ERROR_MESSAGE(quitErr);
    }
  #else
-   Error error = r::exec::RFunction("q", save, 0, true).call();
+   Error error = r::exec::RFunction("q", save, status, true).call();
    if (error)
    {
       REprintf((r::endUserErrorMessage(error) + "\n").c_str());
@@ -1619,6 +1638,20 @@ namespace utils {
 bool isR3()
 {
    return s_isR3;
+}
+
+bool isPackratModeOn()
+{
+   return !core::system::getenv("R_PACKRAT_MODE").empty();
+}
+
+bool isDevtoolsDevModeOn()
+{
+   bool isDevtoolsDevModeOn;
+   Error error = r::exec::RFunction(".rs.devModeOn").call(&isDevtoolsDevModeOn);
+   if (error)
+      LOG_ERROR(error);
+   return isDevtoolsDevModeOn;
 }
 
 bool isDefaultPrompt(const std::string& prompt)
@@ -1670,3 +1703,4 @@ SuppressOutputInScope::~SuppressOutputInScope()
    
 } // namespace session
 } // namespace r
+} // namespace rstudio

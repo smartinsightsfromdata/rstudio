@@ -51,12 +51,15 @@
 
 #include "presentation/SlideRequestHandler.hpp"
 
+#include "SessionHelpHome.hpp"
+
 // protect R against windows TRUE/FALSE defines
 #undef TRUE
 #undef FALSE
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace help {
@@ -618,7 +621,7 @@ void handleRdPreviewRequest(const http::Request& request,
    FilePath filePath = module_context::resolveAliasedPath(file);
    if (!filePath.exists())
    {
-      pResponse->setError(http::status::NotFound, request.uri());
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -705,6 +708,12 @@ void handleHttpdRequest(const std::string& location,
          pResponse->setFile(helpFile, request, filter);
          return;
       }
+   }
+
+   if (boost::algorithm::starts_with(path, "/doc/home/"))
+   {
+      handleHelpHomeRequest(request, kJsCallbacks, pResponse);
+      return;
    }
 
    // evalute the handler
@@ -812,7 +821,7 @@ void handleSessionRequest(const http::Request& request, http::Response* pRespons
    // ensure that this path does not contain ..
    if (uri.find("..") != std::string::npos)
    {
-      pResponse->setError(http::status::NotFound, uri + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -823,9 +832,7 @@ void handleSessionRequest(const http::Request& request, http::Response* pRespons
    pResponse->setCacheWithRevalidationHeaders();
    if (tempFilePath.mimeContentType() == "text/html")
    {
-      pResponse->setCacheableFile(tempFilePath,
-                                  request,
-                                  HelpContentsFilter(request));
+      pResponse->setCacheableFile(tempFilePath, request);
    }
    else
    {
@@ -874,7 +881,7 @@ Error initialize()
    using boost::bind;
    using core::http::UriHandler;
    using namespace module_context;
-   using namespace r::function_hook ;
+   using namespace rstudio::r::function_hook ;
    ExecBlock initBlock ;
    initBlock.addFunctions()
       (bind(registerRBrowseUrlHandler, handleLocalHttpUrl))
@@ -914,4 +921,5 @@ Error initialize()
 } // namepsace help
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

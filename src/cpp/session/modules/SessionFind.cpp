@@ -33,8 +33,9 @@
 #include <session/SessionUserSettings.hpp>
 #include <session/projects/SessionProjects.hpp>
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules {   
 namespace find {
@@ -337,6 +338,10 @@ private:
                continue;
             if (file.find("/.svn/") != std::string::npos)
                continue;
+            if (file.find("/packrat/lib/") != std::string::npos)
+               continue;
+            if (file.find("/packrat/src/") != std::string::npos)
+               continue;
 
             int lineNum = safe_convert::stringTo<int>(std::string(match[2]), -1);
             std::string lineContents = match[3];
@@ -585,3 +590,4 @@ core::Error initialize()
 } // namespace find
 } // namespace modules
 } // namespace session
+} // namespace rstudio

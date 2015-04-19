@@ -22,8 +22,8 @@ add_subdirectory(workers)
 if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/dictionaries")
   message(FATAL_ERROR "Dictionaries not found (re-run install-dependencies script to install)")
 endif()
-if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax")
-  message(FATAL_ERROR "Mathjax not found (re-run install-dependencies script to install)")
+if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax-23")
+  message(FATAL_ERROR "Mathjax 2.3 not found (re-run install-dependencies script to install)")
 endif()
 if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc")
   message(FATAL_ERROR "pandoc not found (re-run install-dependencies script to install)")
@@ -31,6 +31,26 @@ endif()
 if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/rmarkdown")
   message(FATAL_ERROR "rmarkdown package not found (re-run install-dependencies script to install)")
 endif()
+if(NOT EXISTS "${RSTUDIO_DEPENDENCIES_DIR}/common/rsconnect")
+  message(FATAL_ERROR "rsconnect package not found (re-run install-dependencies script to install)")
+endif()
+
+
+# verify libclang is installed
+if(WIN32)
+   set(LIBCLANG_VERSION "3.4")
+else()
+   set(LIBCLANG_VERSION "3.5")
+endif()
+set(LIBCLANG_DIR "${RSTUDIO_DEPENDENCIES_DIR}/common/libclang/${LIBCLANG_VERSION}")
+if(NOT EXISTS "${LIBCLANG_DIR}")
+  message(FATAL_ERROR "libclang ${LIBCLANG_VERSION} not found  (re-run install-dependencies script to install)")
+endif()
+set(LIBCLANG_HEADERS_DIR "${RSTUDIO_DEPENDENCIES_DIR}/common/libclang/builtin-headers")
+if(NOT EXISTS "${LIBCLANG_HEADERS_DIR}")
+  message(FATAL_ERROR "libclang builtin-headers not found  (re-run install-dependencies script to install)")
+endif()
+
 
 # include files
 file(GLOB_RECURSE SESSION_HEADER_FILES "*.h*")
@@ -61,11 +81,13 @@ set (SESSION_SOURCE_FILES
    modules/SessionAbout.cpp
    modules/SessionAgreement.cpp
    modules/SessionAskPass.cpp
+   modules/SessionAsyncPackageInformation.cpp
    modules/SessionAuthoring.cpp
    modules/SessionBreakpoints.cpp
    modules/SessionCodeSearch.cpp
    modules/SessionConsole.cpp
    modules/SessionDependencies.cpp
+   modules/SessionDiagnostics.cpp
    modules/SessionDirty.cpp
    modules/SessionErrors.cpp
    modules/SessionFiles.cpp
@@ -74,29 +96,43 @@ set (SESSION_SOURCE_FILES
    modules/SessionFind.cpp
    modules/SessionGit.cpp
    modules/SessionHelp.cpp
+   modules/SessionHelpHome.cpp
    modules/SessionHistory.cpp
    modules/SessionHistoryArchive.cpp
    modules/SessionHTMLPreview.cpp
    modules/SessionLimits.cpp
    modules/SessionLists.cpp
+   modules/SessionMarkers.cpp
    modules/SessionPackages.cpp
+   modules/SessionPackrat.cpp
    modules/SessionPath.cpp
    modules/SessionPlots.cpp
    modules/SessionProfiler.cpp
+   modules/SessionRCompletions.cpp
+   modules/SessionRHooks.cpp
+   modules/SessionRParser.cpp
    modules/SessionRPubs.cpp
-   modules/SessionShinyApps.cpp
+   modules/SessionRSConnect.cpp
    modules/SessionShinyViewer.cpp
+   modules/SessionSnippets.cpp
    modules/SessionSource.cpp
    modules/SessionSpelling.cpp
    modules/SessionSVN.cpp
    modules/SessionUpdates.cpp
    modules/SessionVCS.cpp
-   modules/SessionViewer.cpp
    modules/SessionWorkbench.cpp
    modules/build/SessionBuild.cpp
    modules/build/SessionBuildEnvironment.cpp
    modules/build/SessionBuildErrors.cpp
    modules/build/SessionSourceCpp.cpp
+   modules/clang/CodeCompletion.cpp
+   modules/clang/DefinitionIndex.cpp
+   modules/clang/Diagnostics.cpp
+   modules/clang/FindReferences.cpp
+   modules/clang/GoToDefinition.cpp
+   modules/clang/RCompilationDatabase.cpp
+   modules/clang/RSourceIndex.cpp
+   modules/clang/SessionClang.cpp
    modules/data/SessionData.cpp
    modules/data/DataViewer.cpp
    modules/environment/EnvironmentMonitor.cpp
@@ -126,6 +162,8 @@ set (SESSION_SOURCE_FILES
    modules/tex/SessionViewPdf.cpp
    modules/vcs/SessionVCSCore.cpp
    modules/vcs/SessionVCSUtils.cpp
+   modules/viewer/SessionViewer.cpp
+   modules/viewer/ViewerHistory.cpp
    projects/SessionProjects.cpp
    projects/SessionProjectContext.cpp
    projects/SessionProjectFirstRun.cpp
@@ -150,11 +188,20 @@ if(UNIX)
 else()
    set(SESSION_SOURCE_FILES ${SESSION_SOURCE_FILES}
       http/SessionWin32HttpConnectionListener.cpp
+      modules/build/SessionInstallRtools.cpp
    )
 endif()
 
 # R files
 file(GLOB_RECURSE SESSION_R_FILES "modules/*.R")
+
+# test files
+if (RSTUDIO_UNIT_TESTS_ENABLED)
+
+  file(GLOB_RECURSE SESSION_TEST_FILES "*Tests.cpp")
+  list(APPEND SESSION_SOURCE_FILES ${SESSION_TEST_FILES})
+
+endif()
 
 # define core include dirs
 set(CORE_INCLUDE_DIRS ${CORE_SOURCE_DIR}/include)
@@ -222,6 +269,7 @@ include_directories(
    ${MONITOR_SOURCE_DIR}/include
    ${R_SOURCE_DIR}/include
    ${CMAKE_CURRENT_BINARY_DIR}
+   ${TESTS_INCLUDE_DIR}
 )
 
 # link directories
@@ -257,6 +305,13 @@ endif()
 # define executable
 add_executable(rsession ${SESSION_SOURCE_FILES} ${SESSION_HEADER_FILES})
 
+# add origin rpath for suse/sles
+if(RSTUDIO_PACKAGE_BUILD_SLES)
+   set(CMAKE_BUILD_WITH_INSTALL_RPATH TRUE)
+   set_target_properties(rsession PROPERTIES
+                         INSTALL_RPATH \$ORIGIN)
+endif()
+
 # set link dependencies
 if(WIN32)
    set(RSTUDIO_CORE_ZLIB rstudio-core-zlib)
@@ -268,6 +323,7 @@ if(APPLE)
         ${SESSION_SYSTEM_LIBRARIES}
         ${MAC_APPKIT_LIBRARY})
 endif()
+
 target_link_libraries(rsession
    rstudio-core
    rstudio-core-hunspell
@@ -278,6 +334,7 @@ target_link_libraries(rsession
    rstudio-session-workers
    ${SESSION_SYSTEM_LIBRARIES}
    ${LIBR_LIBRARIES}
+   ${CMAKE_DL_LIBS}
 )
 
 # configure and install r-ldpaths script
@@ -319,6 +376,10 @@ if (NOT RSTUDIO_SESSION_WIN64)
    install(FILES "resources/NOTICE"
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
 
+   # citation
+   install(FILES "resources/CITATION"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+
    # R scripts
    file(GLOB R_MODULE_SRC_FILES "${CMAKE_CURRENT_BINARY_DIR}/modules/R/*.R")
    install(FILES ${R_MODULE_SRC_FILES}
@@ -329,13 +390,19 @@ if (NOT RSTUDIO_SESSION_WIN64)
            DESTINATION "${RSTUDIO_INSTALL_SUPPORTING}/resources")
 
    # install mathjax for local html preview
-   install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax"
+   install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/mathjax-23"
            DESTINATION "${RSTUDIO_INSTALL_SUPPORTING}/resources")
 
    # install pandoc
-   set(PANDOC_BIN "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc/1.12.3")
+   if(RSTUDIO_PACKAGE_BUILD_SLES)
+      # when producing a SUSE Linux Enterpise build, we want to install the 
+      # static Pandoc binaries (see dependencies/common/install-pandoc)
+      set(PANDOC_EXTENSION_DIR "/static")
+   endif()
+   set(PANDOC_BIN "${RSTUDIO_DEPENDENCIES_DIR}/common/pandoc/1.13.1${PANDOC_EXTENSION_DIR}")
    file(GLOB PANDOC_FILES "${PANDOC_BIN}/pandoc*")
-   install(PROGRAMS ${PANDOC_FILES}
+   install(FILES ${PANDOC_FILES}
+           PERMISSIONS OWNER_READ OWNER_WRITE OWNER_EXECUTE GROUP_READ GROUP_EXECUTE WORLD_READ WORLD_EXECUTE
            DESTINATION  ${RSTUDIO_INSTALL_BIN}/pandoc)
 
    # install rmarkdown package
@@ -343,9 +410,40 @@ if (NOT RSTUDIO_SESSION_WIN64)
    install(FILES ${RMARKDOWN_PACKAGE}
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/R/packages)
 
+   # install rsconnect package
+   file(GLOB RSCONNECT_PACKAGE "${RSTUDIO_DEPENDENCIES_DIR}/common/rsconnect*.tar.gz")
+   install(FILES ${RSCONNECT_PACKAGE}
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/R/packages)
+
    # install PDF.js
    install(DIRECTORY "resources/pdfjs"
            DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+
+   # install DataTables
+   install(DIRECTORY "resources/grid"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+
+   # help resources
+   install(DIRECTORY "resources/help_resources"
+           DESTINATION ${RSTUDIO_INSTALL_SUPPORTING}/resources)
+
+   # install libclang
+   if(WIN32)
+      file(GLOB LIBCLANG_32_FILES "${LIBCLANG_DIR}/x86/libclang.*")
+      install(PROGRAMS ${LIBCLANG_32_FILES}
+              DESTINATION  ${RSTUDIO_INSTALL_BIN}/rsclang/x86)
+      file(GLOB LIBCLANG_64_FILES "${LIBCLANG_DIR}/x86_64/libclang.*")
+      install(PROGRAMS ${LIBCLANG_64_FILES}
+              DESTINATION  ${RSTUDIO_INSTALL_BIN}/rsclang/x86_64)
+   else()
+      file(GLOB_RECURSE LIBCLANG_FILES "${LIBCLANG_DIR}/libclang.*")
+      install(PROGRAMS ${LIBCLANG_FILES}
+              DESTINATION  ${RSTUDIO_INSTALL_BIN}/rsclang)
+   endif()
+
+   # install libclang builtin-headers
+   install(DIRECTORY "${RSTUDIO_DEPENDENCIES_DIR}/common/libclang/builtin-headers"
+           DESTINATION "${RSTUDIO_INSTALL_SUPPORTING}/resources/libclang")
 
    # install 64 bit binaries if we are on win64
    if(WIN32)
@@ -365,7 +463,7 @@ if (NOT RSTUDIO_SESSION_WIN64)
       install(DIRECTORY "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/gnugrep"
               USE_SOURCE_PERMISSIONS
               DESTINATION  ${RSTUDIO_INSTALL_BIN})
-      install(DIRECTORY "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/msys_ssh"
+      install(DIRECTORY "${RSTUDIO_WINDOWS_DEPENDENCIES_DIR}/msys-ssh-1000-18"
               USE_SOURCE_PERMISSIONS
               DESTINATION  ${RSTUDIO_INSTALL_BIN})
 
@@ -381,6 +479,8 @@ endif()
 if(RSTUDIO_SESSION_WIN64)
    get_filename_component(GCC_PATH ${CMAKE_C_COMPILER} PATH CACHE)
    install(PROGRAMS ${GCC_PATH}/libgcc_s_sjlj-1.dll
+                    ${GCC_PATH}/libstdc++-6.dll
+                    ${GCC_PATH}/libwinpthread-1.dll
            DESTINATION ${RSTUDIO_INSTALL_BIN})
 endif()
 
@@ -388,5 +488,3 @@ endif()
 if(EXISTS "${CMAKE_CURRENT_SOURCE_DIR}/CMakeOverlay.txt")
    include(CMakeOverlay.txt)
 endif()
-
-

@@ -13,6 +13,19 @@
 #
 #
 
+# a vectorized function that takes any number of paths and aliases the home
+# directory in those paths (i.e. "/Users/bob/foo" => "~/foo"), leaving any 
+# paths outside the home directory untouched
+.rs.addFunction("createAliasedPath", function(path)
+{
+   homeDir <- path.expand("~/")
+   homePathIdx <- substr(path, 1, nchar(homeDir)) == homeDir
+   homePaths <- path[homePathIdx]
+   path[homePathIdx] <-
+          paste("~", substr(homePaths, nchar(homeDir), nchar(homePaths)), sep="")
+   path
+})
+
 # Some R commands called during packaging-related operations (such as untar)
 # delegate to the system tar binary specified in TAR. On OS X, R may set TAR to
 # /usr/bin/gnutar, which exists prior to Mavericks (10.9) but not in later
@@ -33,19 +46,20 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
       function(pkgname, ...)
       {
          packageStatus = list(name=pkgname,
-                              path=.rs.pathPackage(pkgname, quiet=TRUE),
+                              path=.rs.createAliasedPath(
+                                     .rs.pathPackage(pkgname, quiet=TRUE)),
                               loaded=status)
          .rs.enqueClientEvent("package_status_changed", packageStatus)
       }
    
    notifyPackageLoaded <- function(pkgname, ...)
    {
-      .Call("rs_packageLoaded", pkgname)
+      .Call(.rs.routines$rs_packageLoaded, pkgname)
    }
 
    notifyPackageUnloaded <- function(pkgname, ...)
    {
-      .Call("rs_packageUnloaded", pkgname)
+      .Call(.rs.routines$rs_packageUnloaded, pkgname)
    }
    
    sapply(.packages(TRUE), function(packageName) 
@@ -94,7 +108,9 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
              call. = FALSE)
       }
       
-      if (!is.null(repos) && .rs.loadedPackageUpdates(pkgs)) {
+      packratMode <- !is.na(Sys.getenv("R_PACKRAT_MODE", unset = NA))
+      
+      if (!is.null(repos) && !packratMode && .rs.loadedPackageUpdates(pkgs)) {
 
          # attempt to determine the install command
          if (length(sys.calls()) > 7) {
@@ -117,7 +133,7 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
       # do housekeeping after we execute the original
       on.exit({
          .rs.updatePackageEvents()
-         .rs.enqueClientEvent("installed_packages_changed")
+         .Call(.rs.routines$rs_packageLibraryMutated)
          .rs.restorePreviousPath()
       })
 
@@ -134,7 +150,7 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
                                                                ...) 
    {
       # do housekeeping after we execute the original
-      on.exit(.rs.enqueClientEvent("installed_packages_changed"))
+      on.exit(.Call("rs_packageLibraryMutated"))
                          
       # call original
       original(pkgs, lib, ...) 
@@ -143,12 +159,12 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
 
 .rs.addFunction( "addRToolsToPath", function()
 {
-    .Call("rs_addRToolsToPath")
+    .Call(.rs.routines$rs_addRToolsToPath)
 })
 
 .rs.addFunction( "restorePreviousPath", function()
 {
-    .Call("rs_restorePreviousPath")
+    .Call(.rs.routines$rs_restorePreviousPath)
 })
 
 .rs.addFunction( "uniqueLibraryPaths", function()
@@ -183,12 +199,27 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
   .libPaths()[1]
 })
 
+.rs.addFunction("isPackageLoaded", function(packageName, libName)
+{
+   if (packageName %in% .packages())
+   {
+      # get the raw path to the package 
+      packagePath <- .rs.pathPackage(packageName, quiet=TRUE)
+
+      # alias (for comparison against libName, which comes from the client and
+      # is alised)
+      packagePath <- .rs.createAliasedPath(packagePath)
+
+      # compare with the library given by the client
+      .rs.scalar(identical(packagePath, paste(libName, packageName, sep="/")))
+   }
+   else 
+      .rs.scalar(FALSE)
+})
+
 .rs.addJsonRpcHandler( "is_package_loaded", function(packageName, libName)
 {
-   .rs.scalar( (packageName %in% .packages()) &&
-               identical(.rs.pathPackage(packageName, quiet=TRUE),
-                         paste(libName, packageName, sep="/"))
-             )
+   .rs.isPackageLoaded(packageName, libName)
 })
 
 .rs.addFunction("forceUnloadPackage", function(name)
@@ -207,11 +238,6 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
                                             system.file(package=name)))
     }
   }
-})
-
-.rs.addFunction("libPathsString", function()
-{
-   paste(.libPaths(), collapse = .Platform$path.sep)
 })
 
 .rs.addFunction("packageVersion", function(name, libPath, pkgs)
@@ -236,42 +262,7 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
       .rs.initDefaultUserLibrary()
 })
 
-.rs.addFunction( "initializeRStudioPackages", function(libDir,
-                                                       pkgSrcDir,
-                                                       rsVersion,
-                                                       force) {
-  
-  if (getRversion() >= "3.0.0") {
-    
-    # make sure the default library is writeable
-    .rs.ensureWriteableUserLibrary()
-
-    # function to update a package if necessary
-    updateIfNecessary <- function(pkgName) {
-      isInstalled <- .rs.isPackageInstalled(pkgName, .rs.defaultLibraryPath())
-      if (force || !isInstalled || (.rs.getPackageVersion(pkgName) != rsVersion)) {
-        
-        # remove if necessary
-        if (isInstalled)
-          utils::remove.packages(pkgName, .rs.defaultLibraryPath())
-        
-        # call back into rstudio to install
-        .Call("rs_installPackage", 
-              file.path(pkgSrcDir, pkgName),
-              .rs.defaultLibraryPath())
-      }
-    }
-    
-    updateIfNecessary("rstudio")
-    updateIfNecessary("manipulate")
-    
-  } else {
-    .rs.libPathsAppend(libDir)
-  }
-  
-})
-
-.rs.addJsonRpcHandler( "list_packages", function()
+.rs.addFunction("listInstalledPackages", function()
 {
    # calculate unique libpaths
    uniqueLibPaths <- .rs.uniqueLibraryPaths()
@@ -289,7 +280,8 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
                          "html", 
                          "00Index.html")
    loaded.pkgs <- .rs.pathPackage()
-   pkgs.loaded <- !is.na(match(paste(pkgs.library,pkgs.name, sep="/"),
+   pkgs.loaded <- !is.na(match(normalizePath(
+                                  paste(pkgs.library,pkgs.name, sep="/")),
                                loaded.pkgs))
    
 
@@ -301,6 +293,9 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
                                               pkgs.library[[i]],
                                               instPkgs)
    }
+   
+   # alias library paths for the client
+   pkgs.library <- .rs.createAliasedPath(pkgs.library)
 
    # return data frame sorted by name
    packages = data.frame(name=pkgs.name,
@@ -322,8 +317,10 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
    repos = getOption("repos")
    cranMirrorConfigured <- !is.null(repos) && repos != "@CRAN@"
    
-   # selected repository names
+   # selected repository names (assume an unnamed repo == CRAN)
    selectedRepositoryNames <- names(repos)
+   if (is.null(selectedRepositoryNames))
+     selectedRepositoryNames <- "CRAN"
 
    # package archive extension
    if (identical(.Platform$OS.type, "windows"))
@@ -447,9 +444,57 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
    }
 })
 
+.rs.addFunction("loadedPackagesAndDependencies", function(pkgs) {
+  
+  # if the default set of namespaces in rstudio are loaded
+  # then skip the check
+  defaultNamespaces <- c("base", "datasets", "graphics", "grDevices",
+                         "methods", "stats", "tools", "utils")
+  if (identical(defaultNamespaces, loadedNamespaces()) && length(.dynLibs()) == 4)
+    return(character())
+  
+  packagesLoaded <- function(pkgList) {
+    
+    # first check loaded namespaces
+    loaded <- pkgList[pkgList %in% loadedNamespaces()]
+    
+    # now check if there are libraries still loaded in spite of the
+    # namespace being unloaded 
+    libs <- .dynLibs()
+    libnames <- vapply(libs, "[[", character(1), "name")
+    loaded <- c(loaded, pkgList[pkgList %in% libnames])
+    loaded
+  }
+  
+  # package loaded
+  loaded <- packagesLoaded(pkgs)
+  
+  # dependencies loaded
+  avail <- available.packages()
+  deps <- suppressMessages(suppressWarnings(
+    utils:::getDependencies(pkgs, available=avail)))
+  loaded <- c(loaded, packagesLoaded(deps))
+  
+  # return unique list
+  unique(loaded)  
+})
+
+.rs.addFunction("forceUnloadForPackageInstall", function(pkgs) {
+  
+  # figure out which packages are loaded and/or have dependencies loaded
+  pkgs <- .rs.loadedPackagesAndDependencies(pkgs)
+  
+  # force unload them
+  sapply(pkgs, .rs.forceUnloadPackage)
+  
+  # return packages unloaded
+  pkgs
+})
+
+
 .rs.addFunction("enqueLoadedPackageUpdates", function(installCmd)
 {
-   .Call("rs_enqueLoadedPackageUpdates", installCmd)
+   .Call(.rs.routines$rs_enqueLoadedPackageUpdates, installCmd)
 })
 
 .rs.addJsonRpcHandler("loaded_package_updates_required", function(pkgs)
@@ -462,3 +507,417 @@ if (identical(as.character(Sys.info()["sysname"]), "Darwin") &&
    return(NULL)
 })
 
+.rs.addFunction("getCachedAvailablePackages", function(contribUrl)
+{
+   .Call(.rs.routines$rs_getCachedAvailablePackages, contribUrl)
+})
+
+.rs.addFunction("downloadAvailablePackages", function(contribUrl)
+{
+   .Call(.rs.routines$rs_downloadAvailablePackages, contribUrl)
+})
+
+.rs.addJsonRpcHandler("package_skeleton", function(packageName,
+                                                   packageDirectory,
+                                                   sourceFiles,
+                                                   usingRcpp)
+{
+   # Make sure we expand the aliased path if necessary
+   # (note this is a no-op if there is no leading '~')
+   packageDirectory <- path.expand(packageDirectory)
+   
+   ## Validate the package name -- note that we validate this upstream
+   ## but it is sensible to validate it once more here
+   if (!grepl("^[[:alpha:]][[:alnum:].]*", packageName))
+      return(.rs.error(
+         "Invalid package name: the package name must start ",
+         "with a letter and follow with only alphanumeric characters"))
+   
+   ## Validate the package directory -- if it exists, make sure it's empty,
+   ## otherwise, try to create it
+   if (file.exists(packageDirectory))
+   {
+      containedFiles <- list.files(packageDirectory) ## what about hidden files?
+      if (length(containedFiles))
+      {
+         return(.rs.error(
+            "Folder '", packageDirectory, "' ",
+            "already exists and is not empty"))
+      }
+   }
+   
+   # Otherwise, create it
+   else
+   {
+      if (!dir.create(packageDirectory, recursive = TRUE))
+         return(.rs.error(
+            "Failed to create directory '", packageDirectory, "'"))
+   }
+   
+   ## Create a DESCRIPTION file
+   
+   # Fill some bits based on devtools options if they're available.
+   # Protect against vectors with length > 1
+   getDevtoolsOption <- function(optionName, default, collapse = " ")
+   {
+      option <- getOption(optionName)
+      if (!is.null(option))
+      {
+         if (length(option) > 0)
+            paste(option, collapse = collapse)
+         else
+            option
+      }
+      else default
+   }
+   
+   `%||%` <- function(x, y)
+      if (is.null(x)) y else x
+   
+   Author <- getDevtoolsOption("devtools.name", "Who wrote it")
+   
+   Maintainer <- getDevtoolsOption(
+      "devtools.desc.author",
+      "Who to complain to <yourfault@somewhere.net>"
+   )
+   
+   License <- getDevtoolsOption(
+      "devtools.desc.license",
+      "What license is it under?",
+      ", "
+   )
+   
+   DESCRIPTION <- list(
+      Package = packageName,
+      Type = "Package",
+      Title = "What the Package Does (Title Case)",
+      Version = "0.1",
+      Date = as.character(Sys.Date()),
+      Author = Author,
+      Maintainer = Maintainer,
+      Description = "More about what it does (maybe more than one line)",
+      License = License,
+      LazyData = "TRUE"
+   )
+   
+   # Create a NAMESPACE file
+   NAMESPACE <- c(
+      'exportPattern("^[[:alpha:]]+")'
+   )
+   
+   # If we are using Rcpp, update DESCRIPTION and NAMESPACE
+   if (usingRcpp)
+   {
+      dir.create(file.path(packageDirectory, "src"), showWarnings = FALSE)
+      
+      rcppImportsStatement <- "Rcpp"
+      
+      # We'll enforce Rcpp > (installed version)
+      ip <- installed.packages()
+      if ("Rcpp" %in% rownames(ip))
+         rcppImportsStatement <- sprintf("Rcpp (>= %s)", ip["Rcpp", "Version"])
+      
+      DESCRIPTION$Imports <- c(DESCRIPTION$Imports, rcppImportsStatement)
+      DESCRIPTION$LinkingTo <- c(DESCRIPTION$LinkingTo, "Rcpp")
+      
+      # Add an import from Rcpp, and also useDynLib
+      NAMESPACE <- c(
+         NAMESPACE,
+         "importFrom(Rcpp, evalCpp)",
+         sprintf("useDynLib(%s)", packageName)
+      )
+   }
+   
+   # Get other fields from devtools options
+   if (length(getOption("devtools.desc.suggests")))
+      DESCRIPTION$Suggests <- getOption("devtools.desc.suggests")
+   
+   if (length(getOption("devtools.desc")))
+   {
+      devtools.desc <- getOption("devtools.desc")
+      for (i in seq_along(devtools.desc))
+      {
+         name <- names(devtools.desc)[[i]]
+         value <- devtools.desc[[i]]
+         DESCRIPTION[[name]] <- value
+      }
+   }
+   
+   # If we are using 'testthat' and 'devtools' is available, use it to
+   # add test infrastructure
+   if ("testthat" %in% DESCRIPTION$Suggests)
+   {
+      dir.create(file.path(packageDirectory, "tests"))
+      dir.create(file.path(packageDirectory, "tests", "testthat"))
+      
+      if ("devtools" %in% rownames(installed.packages()))
+      {
+         # NOTE: Okay to load devtools as we will restart the R session
+         # soon anyhow
+         ns <- asNamespace("devtools")
+         if (exists("render_template", envir = ns))
+         {
+            tryCatch(
+               writeLines(
+                  devtools:::render_template(
+                     "testthat.R",
+                     list(name = packageName)
+                  ),
+                  file.path(packageDirectory, "tests", "testthat.R")
+               ), error = function(e) NULL
+            )
+         }
+      }
+   }
+   
+   # If we are using the MIT license, add the template
+   if (grepl("MIT\\s+\\+\\s+file\\s+LICEN[SC]E", DESCRIPTION$License, perl = TRUE))
+   {
+      # Guess the copyright holder
+      holder <- if (!is.null(getOption("devtools.name")))
+         Author
+      else
+         "<Copyright holder>"
+      
+      msg <- c(
+         paste("YEAR:", format(Sys.time(), "%Y")),
+         paste("COPYRIGHT HOLDER:", holder)
+      )
+      
+      cat(msg,
+          file = file.path(packageDirectory, "LICENSE"),
+          sep = "\n")
+   }
+   
+   # Always create 'R/', 'man/' directories
+   dir.create(file.path(packageDirectory, "R"), showWarnings = FALSE)
+   dir.create(file.path(packageDirectory, "man"))
+   
+   # If there were no source files specified, create a simple 'hello world'
+   # function -- but only if the user hasn't implicitly opted into the 'devtools'
+   # ecosystem
+   if ((!length(getOption("devtools.desc"))) &&
+       (!length(sourceFiles)))
+   {
+      
+      # Some simple shortcuts that authors should know
+      sysname <- Sys.info()[["sysname"]]
+      
+      buildShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + B"
+      else
+         "Ctrl + Shift + B"
+      
+      checkShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + E"
+      else
+         "Ctrl + Shift + E"
+      
+      testShortcut <- if (sysname == "Darwin")
+         "Cmd + Shift + T"
+      else
+         "Ctrl + Shift + T"
+      
+      helloWorld <- .rs.trimCommonIndent('
+         # Hello, world!
+         #
+         # This is an example function named \'hello\' 
+         # which prints \'Hello, world!\'.
+         #
+         # You can learn more about package authoring with RStudio at:
+         #
+         #   http://r-pkgs.had.co.nz/
+         #
+         # Some useful keyboard shortcuts for package authoring:
+         #
+         #   Build and Reload Package:  \'%s\'
+         #   Check Package:             \'%s\'
+         #   Test Package:              \'%s\'
+         
+         hello <- function() {
+           print(\"Hello, world!\")
+         }
+      ', buildShortcut, checkShortcut, testShortcut)
+      
+      cat(helloWorld,
+          file = file.path(packageDirectory, "R", "hello.R"),
+          sep = "\n")
+      
+      # Similarly, create a simple example .Rd for this 'hello world' function
+      helloWorldRd <- .rs.trimCommonIndent('
+         \\name{hello}
+         \\alias{hello}
+         \\title{Hello, World!}
+         \\usage{
+         hello()
+         }
+         \\description{
+         Prints \'Hello, world!\'.
+         }
+         \\examples{
+         hello()
+         }
+      ')
+      
+      cat(helloWorldRd,
+          file = file.path(packageDirectory, "man", "hello.Rd"),
+          sep = "\n")
+      
+      if (usingRcpp)
+      {
+         ## Ensure 'src/' directory exists
+         if (!file.exists(file.path(packageDirectory, "src")))
+            dir.create(file.path(packageDirectory, "src"))
+         
+         ## Write a 'hello world' for C++
+         helloWorldCpp <- .rs.trimCommonIndent('
+            #include <Rcpp.h>
+            using namespace Rcpp;
+            
+            // This is a simple function using Rcpp that creates an R list
+            // containing a character vector and a numeric vector.
+            //
+            // Learn more about how to use Rcpp at:
+            //
+            //   http://www.rcpp.org/
+            //   http://adv-r.had.co.nz/Rcpp.html
+            //
+            // and browse examples of code using Rcpp at:
+            // 
+            //   http://gallery.rcpp.org/
+            //
+
+            // [[Rcpp::export]]
+            List rcpp_hello() {
+              CharacterVector x = CharacterVector::create("foo", "bar");
+              NumericVector y   = NumericVector::create(0.0, 1.0);
+              List z            = List::create(x, y);
+              return z;
+            }
+
+         ')
+
+         helloWorldDoc <- .rs.trimCommonIndent('
+            \\name{rcpp_hello}
+            \\alias{rcpp_hello}
+            \\title{Hello, Rcpp!}
+            \\usage{
+            rcpp_hello()
+            }
+            \\description{
+            Returns an \\R \\code{list} containing the character vector
+            \\code{c("foo", "bar")} and the numeric vector \\code{c(0, 1)}.
+            }
+            \\examples{
+            rcpp_hello()
+            }
+         ')
+         
+         cat(helloWorldCpp,
+             file = file.path(packageDirectory, "src", "rcpp_hello.cpp"),
+             sep = "\n")
+
+         cat(helloWorldDoc,
+             file = file.path(packageDirectory, "man", "rcpp_hello.Rd"),
+             sep = "\n")
+         
+      }
+   }
+   else if (length(sourceFiles))
+   {
+      # Copy the source files to the appropriate sub-directory
+      sourceFileExtensions <- gsub(".*\\.", "", sourceFiles, perl = TRUE)
+      sourceDirs <- .rs.swap(
+         sourceFileExtensions,
+         "R" = c("r", "q", "s"),
+         "src" = c("c", "cc", "cpp", "h", "hpp"),
+         "vignettes" = c("rmd", "rnw"),
+         "man" = "rd",
+         "data" = c("rda", "rdata"),
+         default = ""
+      )
+      
+      copyPaths <- gsub("/+", "", file.path(
+         packageDirectory,
+         sourceDirs,
+         basename(sourceFiles)
+      ))
+      
+      dirPaths <- dirname(copyPaths)
+      dir.create(dirPaths, recursive = TRUE)
+      
+      success <- file.copy(sourceFiles,
+                           copyPaths)
+      
+      if (!all(success))
+         return(.rs.error("Failed to copy one or more source files"))
+   }
+   
+   # Write various files out
+   
+   # NOTE: write.dcf mangles whitespace so we manually construct
+   # our DCF
+   for (name in c("Depends", "Imports", "Suggests", "LinkingTo"))
+   {
+      if (name %in% names(DESCRIPTION))
+      {
+         DESCRIPTION[[name]] <- paste(
+            sep = "",
+            "\n    ",
+            paste(DESCRIPTION[[name]], collapse = ",\n    ")
+         )
+      }
+   }
+   
+   names <- names(DESCRIPTION)
+   values <- unlist(DESCRIPTION)
+   text <- paste(names, ": ", values, sep = "", collapse = "\n")
+   cat(text, file = file.path(packageDirectory, "DESCRIPTION"))
+   
+   cat(NAMESPACE, file = file.path(packageDirectory, "NAMESPACE"), sep = "\n")
+   
+   RprojPath <- file.path(
+      packageDirectory,
+      paste(packageName, ".Rproj", sep = "")
+   )
+   
+   if (!.Call("rs_writeProjectFile", RprojPath))
+      return(.rs.error("Failed to create package .Rproj file"))
+   
+   # Ensure new packages get AutoAppendNewLine + StripTrailingWhitespace
+   Rproj <- readLines(RprojPath)
+   
+   appendNewLineIndex <- grep("AutoAppendNewline:", Rproj, fixed = TRUE)
+   if (length(appendNewLineIndex))
+      Rproj[appendNewLineIndex] <- "AutoAppendNewline: Yes"
+   else
+      Rproj <- c(Rproj, "AutoAppendNewline: Yes")
+   
+   stripTrailingWhitespace <- grep("StripTrailingWhitespace:", Rproj, fixed = TRUE)
+   if (length(appendNewLineIndex))
+      Rproj[appendNewLineIndex] <- "StripTrailingWhitespace: Yes"
+   else
+      Rproj <- c(Rproj, "StripTrailingWhitespace: Yes")
+   
+   cat(Rproj, file = RprojPath, sep = "\n")
+   
+   # NOTE: this file is not always generated (e.g. people who have implicitly opted
+   # into using devtools won't need the template file)
+   if (file.exists(file.path(packageDirectory, "R", "hello.R")))
+      .Call(.rs.routines$rs_addFirstRunDoc, RprojPath, "R/hello.R")
+
+   ## NOTE: This must come last to ensure the other package
+   ## infrastructure bits have been generated; otherwise
+   ## compileAttributes can fail
+   if (usingRcpp &&
+       .rs.isPackageVersionInstalled("Rcpp", "0.10.1") &&
+       require(Rcpp, quietly = TRUE))
+   {
+      Rcpp::compileAttributes(packageDirectory)
+      if (file.exists(file.path(packageDirectory, "src/rcpp_hello.cpp")))
+         .Call(.rs.routines$rs_addFirstRunDoc, RprojPath, "src/rcpp_hello.cpp")
+   }
+   
+   .rs.success()
+   
+})

@@ -72,8 +72,9 @@
 
 #include "session-config.h"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {   
 namespace module_context {
       
@@ -123,10 +124,10 @@ SEXP rs_enqueClientEvent(SEXP nameSEXP, SEXP dataSEXP)
       int type = -1 ;
       if (name == "package_status_changed")
          type = session::client_events::kPackageStatusChanged;
-      else if (name == "installed_packages_changed")
-         type = session::client_events::kInstalledPackagesChanged;
       else if (name == "unhandled_error")
          type = session::client_events::kUnhandledError;
+      else if (name == "enable_rstudio_connect")
+         type = session::client_events::kEnableRStudioConnect;
       
       if (type != -1)
       {
@@ -193,6 +194,37 @@ SEXP rs_rstudioProgramMode()
    return r::sexp::create(session::options().programMode(), &rProtect);
 }
 
+// get version
+SEXP rs_rstudioVersion()
+{
+   r::sexp::Protect rProtect;
+   return r::sexp::create(std::string(RSTUDIO_VERSION), &rProtect);
+}
+
+// get citation
+SEXP rs_rstudioCitation()
+{
+   FilePath resPath = session::options().rResourcesPath();
+   FilePath citationPath = resPath.childPath("CITATION");
+
+   SEXP citationSEXP;
+   r::sexp::Protect rProtect;
+   Error error = r::exec::RFunction("utils:::readCitationFile",
+                                    citationPath.absolutePath())
+                                                   .call(&citationSEXP,
+                                                         &rProtect);
+
+   if (error)
+   {
+      LOG_ERROR(error);
+      return R_NilValue;
+   }
+   else
+   {
+      return citationSEXP;
+   }
+}
+
 // ensure file hidden
 SEXP rs_ensureFileHidden(SEXP fileSEXP)
 {
@@ -239,6 +271,38 @@ SEXP rs_packageUnloaded(SEXP pkgnameSEXP)
             client_events::kPackageUnloaded,
             json::Value(pkgname));
    enqueClientEvent(packageUnloadedEvent);
+   return R_NilValue;
+}
+
+SEXP rs_userPrompt(SEXP typeSEXP,
+                   SEXP captionSEXP,
+                   SEXP messageSEXP,
+                   SEXP yesLabelSEXP,
+                   SEXP noLabelSEXP,
+                   SEXP includeCancelSEXP,
+                   SEXP yesIsDefaultSEXP)
+{
+   UserPrompt prompt(r::sexp::asInteger(typeSEXP),
+                     r::sexp::safeAsString(captionSEXP),
+                     r::sexp::safeAsString(messageSEXP),
+                     r::sexp::safeAsString(yesLabelSEXP),
+                     r::sexp::safeAsString(noLabelSEXP),
+                     r::sexp::asLogical(includeCancelSEXP),
+                     r::sexp::asLogical(yesIsDefaultSEXP));
+
+   UserPrompt::Response response = showUserPrompt(prompt);
+
+   r::sexp::Protect rProtect;
+   return r::sexp::create(response, &rProtect);
+}
+
+SEXP rs_restartR(SEXP afterRestartSEXP)
+{
+   std::string afterRestart = r::sexp::safeAsString(afterRestartSEXP);
+   json::Object dataJson;
+   dataJson["after_restart"] = afterRestart;
+   ClientEvent event(client_events::kSuspendAndRestart, dataJson);
+   module_context::enqueClientEvent(event);
    return R_NilValue;
 }
 
@@ -374,94 +438,6 @@ FilePath registerMonitoredUserScratchDir(const std::string& dirName,
 }
 
 
-
-Error initialize()
-{
-   // register rs_enqueClientEvent with R 
-   R_CallMethodDef methodDef ;
-   methodDef.name = "rs_enqueClientEvent" ;
-   methodDef.fun = (DL_FUNC) rs_enqueClientEvent ;
-   methodDef.numArgs = 2;
-   r::routines::addCallMethod(methodDef);
-      
-   // register rs_showErrorMessage with R 
-   R_CallMethodDef methodDef3 ;
-   methodDef3.name = "rs_showErrorMessage" ;
-   methodDef3.fun = (DL_FUNC) rs_showErrorMessage ;
-   methodDef3.numArgs = 2;
-   r::routines::addCallMethod(methodDef3);
-   
-   // register rs_logErrorMessage with R 
-   R_CallMethodDef methodDef4 ;
-   methodDef4.name = "rs_logErrorMessage" ;
-   methodDef4.fun = (DL_FUNC) rs_logErrorMessage ;
-   methodDef4.numArgs = 1;
-   r::routines::addCallMethod(methodDef4);
-   
-   // register rs_logWarningMessage with R 
-   R_CallMethodDef methodDef5 ;
-   methodDef5.name = "rs_logWarningMessage" ;
-   methodDef5.fun = (DL_FUNC) rs_logWarningMessage ;
-   methodDef5.numArgs = 1;
-   r::routines::addCallMethod(methodDef5);
-
-   // register rs_threadSleep with R (debugging function used to test rpc/abort)
-   R_CallMethodDef methodDef6 ;
-   methodDef6.name = "rs_threadSleep" ;
-   methodDef6.fun = (DL_FUNC) rs_threadSleep ;
-   methodDef6.numArgs = 1;
-   r::routines::addCallMethod(methodDef6);
-
-   // register rs_rstudioProgramMode with R
-   R_CallMethodDef methodDef7 ;
-   methodDef7.name = "rs_rstudioProgramMode" ;
-   methodDef7.fun = (DL_FUNC) rs_rstudioProgramMode ;
-   methodDef7.numArgs = 0;
-   r::routines::addCallMethod(methodDef7);
-
-   // register rs_ensureFileHidden with R
-   R_CallMethodDef methodDef8;
-   methodDef8.name = "rs_ensureFileHidden" ;
-   methodDef8.fun = (DL_FUNC) rs_ensureFileHidden ;
-   methodDef8.numArgs = 1;
-   r::routines::addCallMethod(methodDef8);
-
-   // register rs_sourceDiagnostics
-   R_CallMethodDef methodDef9;
-   methodDef9.name = "rs_sourceDiagnostics" ;
-   methodDef9.fun = (DL_FUNC) rs_sourceDiagnostics;
-   methodDef9.numArgs = 0;
-   r::routines::addCallMethod(methodDef9);
-
-   // register rs_activatePane
-   R_CallMethodDef methodDef10;
-   methodDef10.name = "rs_activatePane" ;
-   methodDef10.fun = (DL_FUNC) rs_activatePane;
-   methodDef10.numArgs = 1;
-   r::routines::addCallMethod(methodDef10);
-
-   // register rs_packageLoaded
-   R_CallMethodDef methodDef11;
-   methodDef11.name = "rs_packageLoaded" ;
-   methodDef11.fun = (DL_FUNC) rs_packageLoaded;
-   methodDef11.numArgs = 1;
-   r::routines::addCallMethod(methodDef11);
-
-   // register rs_packageUnloaded
-   R_CallMethodDef methodDef12;
-   methodDef12.name = "rs_packageUnloaded" ;
-   methodDef12.fun = (DL_FUNC) rs_packageUnloaded;
-   methodDef12.numArgs = 1;
-   r::routines::addCallMethod(methodDef12);
-
-   // initialize monitored scratch dir
-   initializeMonitoredUserScratchDir();
-
-   // source the ModuleTools.R file
-   FilePath modulesPath = session::options().modulesRSourcePath();
-   return r::sourceManager().sourceTools(modulesPath.complete("ModuleTools.R"));
-}
-
 namespace {
    
 // manage signals used for custom save and restore
@@ -552,9 +528,16 @@ void addScheduledCommand(boost::shared_ptr<ScheduledCommand> pCommand,
 
 void executeScheduledCommands(ScheduledCommands* pCommands)
 {
+   // make a copy of scheduled commands before executing them
+   // (this is because a scheduled command could result in
+   // R code executing which in turn could cause the list of
+   // scheduled commands to be mutated and these iterators
+   // invalidated)
+   ScheduledCommands commands = *pCommands;
+
    // execute all commands
-   std::for_each(pCommands->begin(),
-                 pCommands->end(),
+   std::for_each(commands.begin(),
+                 commands.end(),
                  boost::bind(&ScheduledCommand::execute, _1));
 
    // remove any commands which are finished
@@ -607,9 +590,16 @@ void schedulePeriodicWork(const boost::posix_time::time_duration& period,
 
 namespace {
 
-bool performDelayedWork(const boost::function<void()> &execute)
+bool performDelayedWork(const boost::function<void()> &execute,
+                        boost::shared_ptr<bool> pExecuted)
 {
+   if (*pExecuted)
+      return false;
+
+   *pExecuted = true;
+
    execute();
+
    return false;
 }
 
@@ -619,8 +609,10 @@ void scheduleDelayedWork(const boost::posix_time::time_duration& period,
                          const boost::function<void()> &execute,
                          bool idleOnly)
 {
+   boost::shared_ptr<bool> pExecuted(new bool(false));
+
    schedulePeriodicWork(period,
-                        boost::bind(performDelayedWork, execute),
+                        boost::bind(performDelayedWork, execute, pExecuted),
                         idleOnly,
                         false);
 }
@@ -745,6 +737,7 @@ FilePath tempDir()
    return r::session::utils::tempDir();
 }
 
+
 FilePath findProgram(const std::string& name)
 {
    std::string which;
@@ -759,6 +752,7 @@ FilePath findProgram(const std::string& name)
       return FilePath(which);
    }
 }
+
 
 bool isPdfLatexInstalled()
 {
@@ -794,16 +788,25 @@ bool hasBinaryMimeType(const FilePath& filePath)
           boost::algorithm::starts_with(mimeType, "video/");
 }
 
+bool isJsonFile(const FilePath& filePath)
+{
+   std::string mimeType = filePath.mimeContentType();
+   return boost::algorithm::ends_with(mimeType, "json");
+}
+
 } // anonymous namespace
 
 bool isTextFile(const FilePath& targetPath)
 {
    if (hasTextMimeType(targetPath))
       return true;
+   
+   if (isJsonFile(targetPath))
+      return true;
 
    if (hasBinaryMimeType(targetPath))
       return false;
-
+   
    if (targetPath.size() == 0)
       return true;
 
@@ -926,6 +929,129 @@ bool isPackageVersionInstalled(const std::string& packageName,
    return !error ? installed : false;
 }
 
+bool isMinimumDevtoolsInstalled()
+{
+   return isPackageVersionInstalled("devtools", "1.4.1");
+}
+
+bool isMinimumRoxygenInstalled()
+{
+   return isPackageVersionInstalled("roxygen2", "4.0");
+}
+
+std::string packageVersion(const std::string& packageName)
+{
+   std::string version;
+   Error error = r::exec::RFunction(".rs.packageVersionString", packageName)
+                                                               .call(&version);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return "(Unknown)";
+   }
+   else
+   {
+      return version;
+   }
+}
+
+bool hasMinimumRVersion(const std::string &version)
+{
+   bool hasVersion = false;
+   boost::format fmt("getRversion() >= '%1%'");
+   std::string versionTest = boost::str(fmt % version);
+   Error error = r::exec::evaluateString(versionTest, &hasVersion);
+   if (error)
+      LOG_ERROR(error);
+   return hasVersion;
+}
+
+PackageCompatStatus getPackageCompatStatus(
+      const std::string& packageName,
+      const std::string& packageVersion,
+      int protocolVersion)
+{
+   r::session::utils::SuppressOutputInScope suppressOutput;
+   int compatStatus = COMPAT_UNKNOWN;
+   r::exec::RFunction func(".rs.getPackageCompatStatus",
+                           packageName, packageVersion, protocolVersion);
+   Error error = func.call(&compatStatus);
+   if (error)
+   {
+      LOG_ERROR(error);
+      return COMPAT_UNKNOWN;
+   }
+   return static_cast<PackageCompatStatus>(compatStatus);
+}
+
+Error installPackage(const std::string& pkgPath, const std::string& libPath)
+{
+   // get R bin directory
+   FilePath rBinDir;
+   Error error = module_context::rBinDir(&rBinDir);
+   if (error)
+      return error;
+
+   // setup options and command
+   core::system::ProcessOptions options;
+#ifdef _WIN32
+   shell_utils::ShellCommand installCommand(rBinDir.childPath("R.exe"));
+#else
+   shell_utils::ShellCommand installCommand(rBinDir.childPath("R"));
+#endif
+
+   installCommand << core::shell_utils::EscapeFilesOnly;
+
+   // for packrat projects we execute the profile and set the working
+   // directory to the project directory; for other contexts we just
+   // propagate the R_LIBS
+   if (module_context::packratContext().modeOn)
+   {
+      options.workingDir = projects::projectContext().directory();
+   }
+   else
+   {
+      installCommand << "--vanilla";
+      core::system::Options env;
+      core::system::environment(&env);
+      std::string libPaths = libPathsString();
+      if (!libPaths.empty())
+         core::system::setenv(&env, "R_LIBS", libPathsString());
+      options.environment = env;
+   }
+
+   installCommand << "CMD" << "INSTALL";
+
+   // if there is a lib path then provide it
+   if (!libPath.empty())
+   {
+      installCommand << "-l";
+      installCommand << "\"" + libPath + "\"";
+   }
+
+   // add pakage path
+   installCommand << "\"" + pkgPath + "\"";
+   core::system::ProcessResult result;
+
+   // run the command
+   error = core::system::runCommand(installCommand,
+                                    options,
+                                    &result);
+
+   if (error)
+      return error;
+
+   if ((result.exitStatus != EXIT_SUCCESS) && !result.stdErr.empty())
+   {
+      return systemError(boost::system::errc::state_not_recoverable,
+                         "Error installing package: " + result.stdErr,
+                         ERROR_LOCATION);
+   }
+
+   return Success();
+}
+
+
 std::string packageNameForSourceFile(const core::FilePath& sourceFilePath)
 {
    // check whether we are in a package
@@ -949,6 +1075,56 @@ std::string packageNameForSourceFile(const core::FilePath& sourceFilePath)
    }
 }
 
+bool isUnmonitoredPackageSourceFile(const FilePath& filePath)
+{
+   // if it's in the current package then it's fine
+   using namespace projects;
+   if (projectContext().hasProject() &&
+      (projectContext().config().buildType == r_util::kBuildTypePackage) &&
+       filePath.isWithin(projectContext().buildTargetPath()))
+   {
+      return false;
+   }
+
+   // ensure we are dealing with a directory
+   FilePath dir = filePath;
+   if (!dir.isDirectory())
+      dir = filePath.parent();
+
+   // see if one the file's parent directories has a DESCRIPTION
+   while (!dir.empty())
+   {
+      FilePath descPath = dir.childPath("DESCRIPTION");
+      if (descPath.exists())
+      {
+         // get path relative to package dir
+         std::string relative = filePath.relativePath(dir);
+         if (boost::algorithm::starts_with(relative, "R/") ||
+             boost::algorithm::starts_with(relative, "src/") ||
+             boost::algorithm::starts_with(relative, "inst/include/"))
+         {
+            return true;
+         }
+         else
+         {
+            return false;
+         }
+      }
+
+      dir = dir.parent();
+   }
+
+   return false;
+}
+
+
+SEXP rs_packageNameForSourceFile(SEXP sourceFilePathSEXP)
+{
+   r::sexp::Protect protect;
+   FilePath sourceFilePath = module_context::resolveAliasedPath(r::sexp::asString(sourceFilePathSEXP));
+   return r::sexp::create(packageNameForSourceFile(sourceFilePath), &protect);
+}
+
 json::Object createFileSystemItem(const FileInfo& fileInfo)
 {
    json::Object entry ;
@@ -965,7 +1141,7 @@ json::Object createFileSystemItem(const FileInfo& fileInfo)
    // length requires cast
    try
    {
-      entry["length"] = boost::numeric_cast<uint64_t>(fileInfo.size());
+      entry["length"] = boost::numeric_cast<boost::uint64_t>(fileInfo.size());
    }
    catch (const boost::bad_numeric_cast& e)
    {
@@ -1080,13 +1256,21 @@ bool isRScriptInPackageBuildTarget(const FilePath &filePath)
    }
 }
 
+SEXP rs_isRScriptInPackageBuildTarget(SEXP filePathSEXP)
+{
+   r::sexp::Protect protect;
+   FilePath filePath = module_context::resolveAliasedPath(r::sexp::asString(filePathSEXP));
+   return r::sexp::create(isRScriptInPackageBuildTarget(filePath), &protect);
+}
+
 bool fileListingFilter(const core::FileInfo& fileInfo)
 {
    // check extension for special file types which are always visible
    core::FilePath filePath(fileInfo.absolutePath());
    std::string ext = filePath.extensionLowerCase();
    std::string name = filePath.filename();
-   if (ext == ".rprofile" ||
+   if (ext == ".r" ||
+       ext == ".rprofile" ||
        ext == ".rbuildignore" ||
        ext == ".rdata"    ||
        ext == ".rhistory" ||
@@ -1100,7 +1284,8 @@ bool fileListingFilter(const core::FileInfo& fileInfo)
       return true;
    }
    else if (userSettings().hideObjectFiles() &&
-            (ext == ".o" || ext == ".so" || ext == ".dll"))
+            (ext == ".o" || ext == ".so" || ext == ".dll") &&
+            filePath.parent().filename() == "src")
    {
       return false;
    }
@@ -1471,5 +1656,303 @@ std::string CRANReposURL()
    return url;
 }
 
+shell_utils::ShellCommand RCommand::buildRCmd(const core::FilePath& rBinDir)
+{
+#if defined(_WIN32)
+   shell_utils::ShellCommand rCmd(rBinDir.childPath("Rcmd.exe"));
+#else
+   shell_utils::ShellCommand rCmd(rBinDir.childPath("R"));
+   rCmd << "CMD";
+#endif
+   return rCmd;
+}
+
+core::Error recursiveCopyDirectory(const core::FilePath& fromDir,
+                                   const core::FilePath& toDir)
+{
+   using namespace string_utils;
+   r::exec::RFunction fileCopy("file.copy");
+   fileCopy.addParam("from", utf8ToSystem(fromDir.absolutePath()));
+   fileCopy.addParam("to", utf8ToSystem(toDir.absolutePath()));
+   fileCopy.addParam("recursive", true);
+   return fileCopy.call();
+}
+
+std::string sessionTempDirUrl(const std::string& sessionTempPath)
+{
+   if (session::options().programMode() == kSessionProgramModeDesktop)
+   {
+      boost::format fmt("http://localhost:%1%/session/%2%");
+      return boost::str(fmt % rLocalHelpPort() % sessionTempPath);
+   }
+   else
+   {
+      boost::format fmt("session/%1%");
+      return boost::str(fmt % sessionTempPath);
+   }
+}
+
+namespace {
+
+bool hasStem(const FilePath& filePath, const std::string& stem)
+{
+   return filePath.stem() == stem;
+}
+
+} // anonymous namespace
+
+Error uniqueSaveStem(const FilePath& directoryPath,
+                     const std::string& base,
+                     std::string* pStem)
+{
+   // determine unique file name
+   std::vector<FilePath> children;
+   Error error = directoryPath.children(&children);
+   if (error)
+      return error;
+
+   // search for unique stem
+   int i = 0;
+   *pStem = base;
+   while(true)
+   {
+      // seek stem
+      std::vector<FilePath>::const_iterator it = std::find_if(
+                                                children.begin(),
+                                                children.end(),
+                                                boost::bind(hasStem, _1, *pStem));
+      // break if not found
+      if (it == children.end())
+         break;
+
+      // update stem and search again
+      boost::format fmt(base + "%1%");
+      *pStem = boost::str(fmt % boost::io::group(std::setfill('0'),
+                                                 std::setw(2),
+                                                 ++i));
+   }
+
+   return Success();
+}
+
+json::Object plotExportFormat(const std::string& name,
+                              const std::string& extension)
+{
+   json::Object formatJson;
+   formatJson["name"] = name;
+   formatJson["extension"] = extension;
+   return formatJson;
+}
+
+Error createSelfContainedHtml(const FilePath& sourceFilePath,
+                              const FilePath& targetFilePath)
+{
+   r::exec::RFunction func("rmarkdown:::pandoc_self_contained_html");
+   func.addParam(string_utils::utf8ToSystem(sourceFilePath.absolutePath()));
+   func.addParam(string_utils::utf8ToSystem(targetFilePath.absolutePath()));
+   return func.call();
+}
+
+bool isUserFile(const FilePath& filePath)
+{
+   if (projects::projectContext().hasProject())
+   {
+      // if we are in a package project then screen our src- files
+      if (projects::projectContext().config().buildType ==
+                                              r_util::kBuildTypePackage)
+      {
+          FilePath pkgPath = projects::projectContext().buildTargetPath();
+          std::string pkgRelative = filePath.relativePath(pkgPath);
+          if (boost::algorithm::starts_with(pkgRelative, "src-"))
+             return false;
+      }
+
+      // screen the packrat directory
+      FilePath projPath = projects::projectContext().directory();
+      std::string pkgRelative = filePath.relativePath(projPath);
+      if (boost::algorithm::starts_with(pkgRelative, "packrat/"))
+         return false;
+   }
+
+   return true;
+}
+
+namespace {
+
+// NOTE: sync changes with SessionCompilePdf.cpp logEntryJson
+json::Value sourceMarkerJson(const SourceMarker& sourceMarker)
+{
+   json::Object obj;
+   obj["type"] = static_cast<int>(sourceMarker.type);
+   obj["path"] = module_context::createAliasedPath(sourceMarker.path);
+   obj["line"] = sourceMarker.line;
+   obj["column"] = sourceMarker.column;
+   obj["message"] = sourceMarker.message.text();
+   obj["log_path"] = "";
+   obj["log_line"] = -1;
+   obj["show_error_list"] = sourceMarker.showErrorList;
+   return obj;
+}
+
+} // anonymous namespace
+
+json::Array sourceMarkersAsJson(const std::vector<SourceMarker>& markers)
+{
+   json::Array markersJson;
+   std::transform(markers.begin(),
+                  markers.end(),
+                  std::back_inserter(markersJson),
+                  sourceMarkerJson);
+   return markersJson;
+}
+
+SourceMarker::Type sourceMarkerTypeFromString(const std::string& type)
+{
+   if (type == "error")
+      return SourceMarker::Error;
+   else if (type == "warning")
+      return SourceMarker::Warning;
+   else if (type == "box")
+      return SourceMarker::Box;
+   else if (type == "info")
+      return SourceMarker::Info;
+   else if (type == "style")
+      return SourceMarker::Style;
+   else if (type == "usage")
+      return SourceMarker::Usage;
+   else
+      return SourceMarker::Error;
+}
+
+core::json::Array sourceMarkersAsJson(const std::vector<SourceMarker>& markers);
+
+
+Error initialize()
+{
+   // register rs_enqueClientEvent with R 
+   R_CallMethodDef methodDef ;
+   methodDef.name = "rs_enqueClientEvent" ;
+   methodDef.fun = (DL_FUNC) rs_enqueClientEvent ;
+   methodDef.numArgs = 2;
+   r::routines::addCallMethod(methodDef);
+      
+   // register rs_showErrorMessage with R 
+   R_CallMethodDef methodDef3 ;
+   methodDef3.name = "rs_showErrorMessage" ;
+   methodDef3.fun = (DL_FUNC) rs_showErrorMessage ;
+   methodDef3.numArgs = 2;
+   r::routines::addCallMethod(methodDef3);
+   
+   // register rs_logErrorMessage with R 
+   R_CallMethodDef methodDef4 ;
+   methodDef4.name = "rs_logErrorMessage" ;
+   methodDef4.fun = (DL_FUNC) rs_logErrorMessage ;
+   methodDef4.numArgs = 1;
+   r::routines::addCallMethod(methodDef4);
+   
+   // register rs_logWarningMessage with R 
+   R_CallMethodDef methodDef5 ;
+   methodDef5.name = "rs_logWarningMessage" ;
+   methodDef5.fun = (DL_FUNC) rs_logWarningMessage ;
+   methodDef5.numArgs = 1;
+   r::routines::addCallMethod(methodDef5);
+
+   // register rs_threadSleep with R (debugging function used to test rpc/abort)
+   R_CallMethodDef methodDef6 ;
+   methodDef6.name = "rs_threadSleep" ;
+   methodDef6.fun = (DL_FUNC) rs_threadSleep ;
+   methodDef6.numArgs = 1;
+   r::routines::addCallMethod(methodDef6);
+
+   // register rs_rstudioProgramMode with R
+   R_CallMethodDef methodDef7 ;
+   methodDef7.name = "rs_rstudioProgramMode" ;
+   methodDef7.fun = (DL_FUNC) rs_rstudioProgramMode ;
+   methodDef7.numArgs = 0;
+   r::routines::addCallMethod(methodDef7);
+
+   // register rs_ensureFileHidden with R
+   R_CallMethodDef methodDef8;
+   methodDef8.name = "rs_ensureFileHidden" ;
+   methodDef8.fun = (DL_FUNC) rs_ensureFileHidden ;
+   methodDef8.numArgs = 1;
+   r::routines::addCallMethod(methodDef8);
+
+   // register rs_sourceDiagnostics
+   R_CallMethodDef methodDef9;
+   methodDef9.name = "rs_sourceDiagnostics" ;
+   methodDef9.fun = (DL_FUNC) rs_sourceDiagnostics;
+   methodDef9.numArgs = 0;
+   r::routines::addCallMethod(methodDef9);
+
+   // register rs_activatePane
+   R_CallMethodDef methodDef10;
+   methodDef10.name = "rs_activatePane" ;
+   methodDef10.fun = (DL_FUNC) rs_activatePane;
+   methodDef10.numArgs = 1;
+   r::routines::addCallMethod(methodDef10);
+
+   // register rs_packageLoaded
+   R_CallMethodDef methodDef11;
+   methodDef11.name = "rs_packageLoaded" ;
+   methodDef11.fun = (DL_FUNC) rs_packageLoaded;
+   methodDef11.numArgs = 1;
+   r::routines::addCallMethod(methodDef11);
+
+   // register rs_packageUnloaded
+   R_CallMethodDef methodDef12;
+   methodDef12.name = "rs_packageUnloaded" ;
+   methodDef12.fun = (DL_FUNC) rs_packageUnloaded;
+   methodDef12.numArgs = 1;
+   r::routines::addCallMethod(methodDef12);
+
+   // register rs_userPrompt
+   R_CallMethodDef methodDef13;
+   methodDef13.name = "rs_userPrompt" ;
+   methodDef13.fun = (DL_FUNC) rs_userPrompt;
+   methodDef13.numArgs = 7;
+   r::routines::addCallMethod(methodDef13);
+
+   // register rs_restartR
+   R_CallMethodDef methodDef14;
+   methodDef14.name = "rs_restartR" ;
+   methodDef14.fun = (DL_FUNC) rs_restartR;
+   methodDef14.numArgs = 1;
+   r::routines::addCallMethod(methodDef14);
+   
+   // register rs_isRScriptInPackageBuildTarget
+   r::routines::registerCallMethod(
+            "rs_isRScriptInPackageBuildTarget",
+            (DL_FUNC) rs_isRScriptInPackageBuildTarget,
+            1);
+   
+   // register rs_packageNameForSourceFile
+   r::routines::registerCallMethod(
+            "rs_packageNameForSourceFile",
+            (DL_FUNC) rs_packageNameForSourceFile,
+            1);
+
+   // register rs_rstudioVersion
+   r::routines::registerCallMethod(
+            "rs_rstudioVersion",
+            (DL_FUNC) rs_rstudioVersion,
+            0);
+
+   // regsiter rs_rstudioCitation
+   r::routines::registerCallMethod(
+            "rs_rstudioCitation",
+            (DL_FUNC) rs_rstudioCitation,
+            0);
+   
+   // initialize monitored scratch dir
+   initializeMonitoredUserScratchDir();
+
+   // source the ModuleTools.R file
+   FilePath modulesPath = session::options().modulesRSourcePath();
+   return r::sourceManager().sourceTools(modulesPath.complete("ModuleTools.R"));
+}
+
+
 } // namespace module_context         
 } // namespace session
+} // namespace rstudio

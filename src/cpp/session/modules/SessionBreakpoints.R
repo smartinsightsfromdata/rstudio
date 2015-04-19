@@ -18,6 +18,12 @@
 .rs.addFunction("getEnvironmentOfFunction", function(
    objName, fileName, packageName)
 {
+   # assume fileName is UTF-8 encoded unless it's already got a labelled
+   # encoding
+   if (Encoding(fileName) == "unknown") {
+      Encoding(fileName) <- "UTF-8"
+   }
+
    isPackage <- nchar(packageName) > 0
 
    # when searching specifically for a function in a package, search from the
@@ -41,9 +47,14 @@
          if (!is.null(srcref))
          {
             # get the name of the file from which the function originated, and
-            # trim off the trailing space; see if it matches the filename
+            # trim off the trailing space
             fileattr <- attr(srcref, "srcfile")
-            if (normalizePath(fileattr$filename) == normalizePath(fileName))
+
+            # if the srcref has a srcfile, resolve it (if it exists) and
+            # compare with the input we were given
+            if (!is.null(fileattr) &&
+                (normalizePath(fileattr$filename, mustWork = FALSE) == 
+                 normalizePath(fileName)))
             {
                return (env)
             }
@@ -164,13 +175,14 @@
         identical(funBody[[idx]], NA_complex_) || 
         identical(funBody[[idx]], NA_integer_) || 
         identical(funBody[[idx]], NA_real_) || 
+        identical(funBody[[idx]], NaN) ||
         is.pairlist(funBody[[idx]])) 
        next
 
     # if this expression was replaced by trace(), copy the source references
     # from the original expression over each expression injected by trace()
     if (length(funBody[[idx]]) != length(originalFunBody[[idx]]) ||
-        sum(funBody[[idx]] != originalFunBody[[idx]]) > 0)
+        isTRUE(sum(funBody[[idx]] != originalFunBody[[idx]]) > 0))
     {
       attr(funBody[[idx]], "srcref") <-
         rep(list(attr(originalFunBody, "srcref")[[idx]]), length(funBody[[idx]]))
@@ -342,11 +354,24 @@
 })
 
 # Parses and executes a file for debugging
-.rs.addFunction("executeDebugSource", function(fileName, encoding, breaklines)
+.rs.addFunction("executeDebugSource", function(fileName, encoding, breaklines, local)
 {
+   envir <-
+      if (isTRUE(local)) {
+         # If local is TRUE, we take the first frame as it's what was artificially
+         # constructed in earlier code
+         sys.frames()[[1]]
+      } else if (identical(local, FALSE)) {
+         .GlobalEnv
+      } else if (is.environment(local)) {
+         local
+      } else {
+         stop("'local' must be TRUE, FALSE or an environment")
+      }
+
    # Create a function containing the parsed contents of the file
    env <- new.env(parent = emptyenv())
-   env$fun <- .rs.makeSourceEquivFunction(fileName, encoding)
+   env$fun <- .rs.makeSourceEquivFunction(fileName, encoding, envir)
    breakSteps <- character()
 
    # Inject the breakpoints
@@ -413,14 +438,14 @@
 
 # Given a filename, creates a source-equivalent function: a function that,
 # when executed, has the same effect as sourcing the file.
-.rs.addFunction("makeSourceEquivFunction", function(filename, encoding)
-{ 
+.rs.addFunction("makeSourceEquivFunction", function(filename, encoding, envir = globalenv())
+{
    content <- suppressWarnings(parse(filename, encoding))
 
    # Create an empty function to host the expressions in the file
    fun <- function() 
    {
-      evalq({ 1 }, envir = globalenv())
+      evalq({ 1 }, envir = envir)
    }
 
    # Copy each statement from the file into the eval body of the function
@@ -452,13 +477,17 @@
    return(fun)
 })
 
-.rs.addGlobalFunction("debugSource", function(fileName, echo=FALSE, 
-                                              encoding="unknown")
+.rs.addGlobalFunction("debugSource", function(fileName,
+                                              echo = FALSE,
+                                              encoding = "unknown",
+                                              local = FALSE)
 {
    # NYI: Consider whether we need to implement source with echo for debugging.
    # This would likely involve injecting print statements into the generated
    # source-equivalent function.
-   invisible(.Call("rs_debugSourceFile", fileName, encoding))
+
+   # convert filename to UTF-8 before proceeding 
+   invisible(.Call("rs_debugSourceFile", enc2utf8(fileName), encoding, local))
 })
 
 # Parameters expected to be in environment:
@@ -478,7 +507,7 @@
    params$fun <- fun
 
    # Register the function with RStudio (may set breakpoints)
-   .Call("rs_registerShinyFunction", params)
+   .Call(.rs.routines$rs_registerShinyFunction, params)
 })
 
 .rs.addJsonRpcHandler("get_function_steps", function(
@@ -491,15 +520,5 @@
 })
 
 .rs.addFunction("haveAdvancedSteppingCommands", function() {
-   if (getRversion() >= "3.1") {
-      svnRev <- R.version$`svn rev`
-      if (!is.null(svnRev)) {
-         svnRevNumeric <- suppressWarnings(as.numeric(svnRev))
-         if (!is.na(svnRevNumeric) && length(svnRevNumeric) == 1)
-            return (svnRevNumeric >= 63400)
-      }
-   } 
-   # fallthrough
-   return (FALSE)
+   getRversion() >= "3.1" && .rs.haveRequiredRSvnRev(63400)
 })
-

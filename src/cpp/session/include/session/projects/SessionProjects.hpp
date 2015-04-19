@@ -38,7 +38,8 @@
 #include <core/r_util/RProjectFile.hpp>
 #include <core/r_util/RSourceIndex.hpp>
 #include <core/r_util/RPackageInfo.hpp>
- 
+
+namespace rstudio {
 namespace session {
 namespace projects {
 
@@ -147,11 +148,12 @@ public:
       return buildOptions_;
    }
 
-   // current package info (if this is a package)
    const core::r_util::RPackageInfo& packageInfo() const
    {
       return packageInfo_;
    }
+   
+   bool isPackageProject();
 
    // does this project context have a file monitor? (might not have one
    // if the user has disabled code indexing or if file monitoring failed
@@ -217,5 +219,6 @@ ProjectContext& projectContext();
 
 } // namespace projects
 } // namesapce session
+} // namespace rstudio
 
 #endif // SESSION_PROJECTS_PROJECTS_HPP

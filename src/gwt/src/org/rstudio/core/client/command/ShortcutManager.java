@@ -1,7 +1,7 @@
 /*
  * ShortcutManager.java
  *
- * Copyright (C) 2009-13 by RStudio, Inc.
+ * Copyright (C) 2009-15 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -14,21 +14,21 @@
  */
 package org.rstudio.core.client.command;
 
-import com.google.gwt.dom.client.NativeEvent;
-import com.google.gwt.user.client.Command;
-import com.google.gwt.user.client.Event;
-import com.google.gwt.user.client.Event.NativePreviewEvent;
-import com.google.gwt.user.client.Event.NativePreviewHandler;
-import org.rstudio.core.client.BrowseCap;
-import org.rstudio.core.client.events.NativeKeyDownEvent;
-import org.rstudio.core.client.events.NativeKeyDownHandler;
-
 import java.util.ArrayList;
 import java.util.Collections;
 import java.util.Comparator;
 import java.util.HashMap;
 import java.util.List;
-import java.util.Set;
+
+import org.rstudio.core.client.BrowseCap;
+import org.rstudio.core.client.events.NativeKeyDownEvent;
+import org.rstudio.core.client.events.NativeKeyDownHandler;
+
+import com.google.gwt.dom.client.NativeEvent;
+import com.google.gwt.user.client.Command;
+import com.google.gwt.user.client.Event;
+import com.google.gwt.user.client.Event.NativePreviewEvent;
+import com.google.gwt.user.client.Event.NativePreviewHandler;
 
 public class ShortcutManager implements NativePreviewHandler,
                                         NativeKeyDownHandler
@@ -71,13 +71,14 @@ public class ShortcutManager implements NativePreviewHandler,
                         int keyCode, 
                         AppCommand command, 
                         String groupName, 
-                        String title)
+                        String title,
+                        String disableModes)
    {
       if (!BrowseCap.hasMetaKey() && (modifiers & KeyboardShortcut.META) != 0)
          return;
       
       KeyboardShortcut shortcut = 
-            new KeyboardShortcut(modifiers, keyCode, groupName, title);
+            new KeyboardShortcut(modifiers, keyCode, groupName, title, disableModes);
       if (command == null)
       {
          // If the shortcut is unbound, check to see whether there's another
@@ -95,8 +96,26 @@ public class ShortcutManager implements NativePreviewHandler,
       }
       else
       {
-         commands_.put(shortcut, command);
+         ArrayList<AppCommand> commands;
+         if (commands_.containsKey(shortcut)) 
+         {
+            // already have a command for this shortcut; add this one
+            commands = commands_.get(shortcut);
+         }
+         else 
+         {
+            // no commands yet, make a new list
+            commands = new ArrayList<AppCommand>();
+            commands_.put(shortcut, commands);
+         }
+         commands.add(command);
+
          command.setShortcut(shortcut);
+      }
+      
+      if (shortcut.isModalShortcut())
+      {
+         modalShortcuts_.add(shortcut);
       }
    }
 
@@ -121,13 +140,19 @@ public class ShortcutManager implements NativePreviewHandler,
       }
    }
    
+   public void setEditorMode(int editorMode)
+   {
+      editorMode_ = editorMode;
+   }
+   
    public List<ShortcutInfo> getActiveShortcutInfo()
    {
       List<ShortcutInfo> info = new ArrayList<ShortcutInfo>();
       
       HashMap<Command, ShortcutInfo> infoMap = 
             new HashMap<Command, ShortcutInfo>();
-      Set<KeyboardShortcut> shortcuts = commands_.keySet();
+      ArrayList<KeyboardShortcut> shortcuts = 
+            new ArrayList<KeyboardShortcut>();
       
       // Create a ShortcutInfo for each unbound shortcut
       for (KeyboardShortcut shortcut: unboundShortcuts_)
@@ -135,11 +160,29 @@ public class ShortcutManager implements NativePreviewHandler,
          info.add(new ShortcutInfo(shortcut, null));
       }
 
+      // Sort the shortcuts as they were presented in Commands.cmd.xml
+      for (KeyboardShortcut ks: commands_.keySet())
+      {
+         shortcuts.add(ks);
+      }
+      Collections.sort(shortcuts, new Comparator<KeyboardShortcut>()
+      {
+         @Override
+         public int compare(KeyboardShortcut o1, KeyboardShortcut o2)
+         {
+            return o1.getOrder() - o2.getOrder();
+         }
+      });
+
       // Create a ShortcutInfo for each command (a command may have multiple
       // shortcut bindings)
       for (KeyboardShortcut shortcut: shortcuts)
       {
-         AppCommand command = commands_.get(shortcut);
+         // skip shortcuts inaccessible due to editor mode
+         if (shortcut.isModeDisabled(editorMode_))
+            continue;
+         
+         AppCommand command = commands_.get(shortcut).get(0);
          if (infoMap.containsKey(command))
          {
             infoMap.get(command).addShortcut(shortcut);
@@ -170,29 +213,59 @@ public class ShortcutManager implements NativePreviewHandler,
 
       KeyboardShortcut shortcut = new KeyboardShortcut(modifiers,
                                                        e.getKeyCode());
-      AppCommand command = commands_.get(shortcut);
-      if (command != null)
-      {
-         boolean enabled = isEnabled() && command.isEnabled();
-         
-         // some commands want their keyboard shortcut to pass through 
-         // to the browser when they are disabled (e.g. Cmd+W)
-         if (!enabled && !command.preventShortcutWhenDisabled())
-            return false;
-         
-         e.preventDefault();
 
-         if (enabled)
-            command.executeFromShortcut();
+      // check for disabled modal shortcuts if we're modal
+      if (editorMode_ > 0)
+      {
+         for (KeyboardShortcut modalShortcut: modalShortcuts_)
+         {
+            if (modalShortcut.equals(shortcut) &&
+                modalShortcut.isModeDisabled(editorMode_))
+            {
+               return false;
+            }
+         }
+      }
+
+      if (!commands_.containsKey(shortcut) || commands_.get(shortcut) == null) 
+      {
+         return false;
+      }
+      
+      
+      AppCommand command = null;
+      for (int i = 0; i < commands_.get(shortcut).size(); i++) 
+      {
+         command = commands_.get(shortcut).get(i);
+         if (command != null)
+         {
+            boolean enabled = isEnabled() && command.isEnabled();
+            
+            // some commands want their keyboard shortcut to pass through 
+            // to the browser when they are disabled (e.g. Cmd+W)
+            if (!enabled && !command.preventShortcutWhenDisabled())
+               return false;
+            
+            e.preventDefault();
+
+            // if this command is enabled, execute it and stop looking  
+            if (enabled) 
+            {
+               command.executeFromShortcut();
+               break;
+            }
+         }
       }
 
       return command != null;
    }
 
    private int disableCount_ = 0;
-   private final HashMap<KeyboardShortcut, AppCommand> commands_
-                                  = new HashMap<KeyboardShortcut, AppCommand>();
+   private int editorMode_ = KeyboardShortcut.MODE_NONE;
+   private final HashMap<KeyboardShortcut, ArrayList<AppCommand> > commands_
+                                  = new HashMap<KeyboardShortcut, ArrayList<AppCommand> >();
    private ArrayList<KeyboardShortcut> unboundShortcuts_
                                   = new ArrayList<KeyboardShortcut>();
-
+   private ArrayList<KeyboardShortcut> modalShortcuts_ 
+                                  = new ArrayList<KeyboardShortcut>();
 }

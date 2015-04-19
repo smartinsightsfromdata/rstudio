@@ -17,14 +17,33 @@
 #ifndef SESSION_ASYNC_R_PROCESS_HPP
 #define SESSION_ASYNC_R_PROCESS_HPP
 
+#include <boost/enable_shared_from_this.hpp>
+
 namespace core
 {
    class FilePath;
 }
 
-namespace session {   
+namespace rstudio {
+namespace session {
 namespace async_r {
-    
+
+enum AsyncRProcessOptions
+{
+   R_PROCESS_NORMAL         = 1 << 0,
+   R_PROCESS_REDIRECTSTDERR = 1 << 1,
+   R_PROCESS_VANILLA        = 1 << 2,
+   R_PROCESS_AUGMENTED      = 1 << 3,
+   R_PROCESS_NO_RDATA       = 1 << 4
+};
+
+inline AsyncRProcessOptions operator | (AsyncRProcessOptions lhs,
+                                        AsyncRProcessOptions rhs)
+{
+   return static_cast<AsyncRProcessOptions>(
+            static_cast<int>(lhs) | static_cast<int>(rhs));
+}
+
 class AsyncRProcess :
       boost::noncopyable,
       public boost::enable_shared_from_this<AsyncRProcess>
@@ -33,7 +52,11 @@ public:
    AsyncRProcess();
    virtual ~AsyncRProcess();
 
-   void start(const char* rCommand, const core::FilePath& workingDir);
+   void start(const char* rCommand,
+              const core::FilePath& workingDir,
+              AsyncRProcessOptions rOptions,
+              std::vector<core::FilePath> rSourceFiles = std::vector<core::FilePath>());
+
    bool isRunning();
    void terminate();
    void markCompleted();
@@ -44,7 +67,6 @@ protected:
    virtual void onStderr(const std::string& output);
 
    virtual void onCompleted(int exitStatus) = 0;
-   virtual bool redirectStdErrToStdOut();
 
 private:
    void onProcessCompleted(int exitStatus);
@@ -54,5 +76,6 @@ private:
 
 } // namespace async_r
 } // namespace session
+} // namespace rstudio
 
 #endif

@@ -24,8 +24,9 @@
 #include <dlfcn.h>
 #endif
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace server {
 namespace app_armor {
   
@@ -56,8 +57,7 @@ Error enforceRestricted()
    void* pLibAA = ::dlopen("libapparmor.so.1", RTLD_NOW);
    if (pLibAA == NULL)
    {
-      Error error = systemError(boost::system::errc::no_such_file_or_directory,
-                                ERROR_LOCATION);
+      Error error = pathNotFoundError(ERROR_LOCATION);
       addLastDLErrorMessage(&error);
       return error;
    }
@@ -101,4 +101,5 @@ Error enforceRestricted()
 
 } // namespace app_aprmor
 } // namespace server
+} // namespace rstudio
 

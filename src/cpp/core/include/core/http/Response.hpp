@@ -34,6 +34,7 @@
 #include "Request.hpp"
 #include "Util.hpp"
 
+namespace rstudio {
 namespace core {
    
 class ErrorLocation;
@@ -112,7 +113,7 @@ public:
    void setPrivateCacheForeverHeaders();
    void setNoCacheHeaders();
    
-   void setChromeFrameCompatible(const Request& request);
+   void setBrowserCompatible(const Request& request);
 
    void addCookie(const Cookie& cookie) ;
    
@@ -261,7 +262,7 @@ public:
       // ensure that the file exists
       if (!filePath.exists())
       {
-         setError(http::status::NotFound, request.uri() + " not found");
+         setNotFoundError(request.uri());
          return;
       }
       
@@ -292,7 +293,7 @@ public:
       // ensure that the file exists
       if (!filePath.exists())
       {
-         setError(http::status::NotFound, request.uri() + " not found");
+         setNotFoundError(request.uri());
          return;
       }
       
@@ -322,6 +323,7 @@ public:
    // these calls do no stream io or encoding so don't return errors
    void setBodyUnencoded(const std::string& body);
    void setError(int statusCode, const std::string& message);
+   void setNotFoundError(const std::string& uri);
    void setError(const Error& error);
    
    void setMovedPermanently(const http::Request& request, const std::string& location);
@@ -357,5 +359,6 @@ std::ostream& operator << (std::ostream& stream, const Response& r) ;
 
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_RESPONSE_HPP

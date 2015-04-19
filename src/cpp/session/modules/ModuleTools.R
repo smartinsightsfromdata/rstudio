@@ -15,22 +15,22 @@
 
 .rs.addFunction("enqueClientEvent", function(type, data = NULL)
 {
-   .Call("rs_enqueClientEvent", type, data)
+   .Call(.rs.routines$rs_enqueClientEvent, type, data)
 })
 
 .rs.addFunction("showErrorMessage", function(title, message)
 {
-   .Call("rs_showErrorMessage", title, message)
+   .Call(.rs.routines$rs_showErrorMessage, title, message)
 })
 
 .rs.addFunction("logErrorMessage", function(message)
 {
-   .Call("rs_logErrorMessage", message)
+   .Call(.rs.routines$rs_logErrorMessage, message)
 })
 
 .rs.addFunction("logWarningMessage", function(message)
 {
-   .Call("rs_logWarningMessage", message)
+   .Call(.rs.routines$rs_logWarningMessage, message)
 })
 
 .rs.addFunction("getSignature", function(obj)
@@ -85,6 +85,22 @@
             error = function(e) NULL)
 })
 
+.rs.addFunction("libPathsString", function()
+{
+   paste(.libPaths(), collapse = .Platform$path.sep)
+})
+
+.rs.addFunction("parseLinkingTo", function(linkingTo)
+{
+   if (is.null(linkingTo))
+      return (character())
+
+   linkingTo <- strsplit(linkingTo, "\\s*\\,")[[1]]
+   result <- gsub("\\s", "", linkingTo)
+   gsub("\\(.*", "", result)
+})
+
+
 .rs.addFunction("isPackageInstalled", function(name, libLoc = NULL)
 {
   name %in% .packages(all.available = TRUE, lib.loc = libLoc)
@@ -94,12 +110,90 @@
   .rs.isPackageInstalled(name) && (.rs.getPackageVersion(name) >= version)
 })
 
+.rs.addFunction("packageCRANVersionAvailable", function(name, version) {
+  # get the specified CRAN repo
+  repo <- NA
+  repos <- getOption("repos")
+  if (is.character(repos)) {
+    if (is.null(names(repos))) {
+      # no indication of which repo is which, presume the first entry to be
+      # CRAN
+      if (length(repos) > 0)
+        repo <- repos[[1]]
+    } else {
+      # use repo named CRAN
+      repo <- as.character(repos["CRAN"])
+    }
+  }
+
+  # if no default repo and no repo marked CRAN, give up
+  if (is.na(repo)) {
+    return(list(version = "", satisfied = FALSE))
+  }
+
+  # get the available packages and extract the version information
+  pkgs <- available.packages(
+            contriburl = contrib.url(repo, getOption("pkgType")))
+  if (!(name %in% row.names(pkgs))) {
+    return(list(version = "", satisfied = FALSE))
+  }
+  pkgVersion <- pkgs[name, "Version"]
+  return(list(
+    version = pkgVersion, 
+    satisfied = package_version(pkgVersion) >= package_version(version)))
+})
+
+.rs.addFunction("packageVersionString", function(pkg) {
+   as.character(packageVersion(pkg))
+})
+
+.rs.addFunction("getPackageCompatStatus", 
+  function(name, packageVersion, protocolVersion) 
+  {  
+     if (!.rs.isPackageInstalled(name))
+       return(1L)  # COMPAT_MISSING
+     else if (!.rs.getPackageVersion(name) >= packageVersion) 
+       return(2L)  # COMPAT_TOO_OLD
+     else if (!.rs.getPackageRStudioProtocol(name) >= protocolVersion) 
+       return(3L)  # COMPAT_TOO_NEW
+     return (0L)   # COMPAT_OK
+  }
+)
+
+.rs.addFunction("getPackageRStudioProtocol", function(name) {
+
+   ## First check to see if the package has a 'rstudio-protocol' file
+   path <- system.file("rstudio/rstudio-protocol", package = name)
+   if (path != "") {
+      tryCatch(
+         expr = {
+            return(as.integer(read.dcf(path, all = TRUE)$Version))
+         },
+         warning = function(e) {},
+         error = function(e) {}
+      )
+   }
+
+   ## Otherwise, check the namespace
+   needsUnloadAfter <- !(name %in% loadedNamespaces())
+   rpv <- ".RStudio_protocol_version"
+   env <- asNamespace(name)
+   if (exists(rpv, envir = env, mode = "integer")) {
+      version <- get(rpv, envir = env)
+   } else {
+      version <- 0L
+   }
+   if (needsUnloadAfter)
+      unloadNamespace(name)
+   version
+})
+
 .rs.addFunction("rstudioIDEPackageRequiresUpdate", function(name, sha1) {
    
   if (.rs.isPackageInstalled(name))
   {
      f <- utils::packageDescription(name, fields=c("Repository", "GithubSHA1"))
-     identical(f$Repository, "RStudioIDE") && !identical(f$GithubSHA1, sha1)
+     identical(f$Origin, "RStudioIDE") && !identical(f$GithubSHA1, sha1)
   }
   else
   {
@@ -111,7 +205,54 @@
 {
   pkgDir <- find.package(name)
   .rs.forceUnloadPackage(name)
-  .Call("rs_installPackage",  archive, dirname(pkgDir))
+  .Call(.rs.routines$rs_installPackage,  archive, dirname(pkgDir))
 })
+
+
+.rs.addFunction("userPrompt", function(type,
+                                       caption,
+                                       message,
+                                       yesLabel = NULL,
+                                       noLabel = NULL,
+                                       includeCancel = FALSE,
+                                       yesIsDefault = TRUE) {
+
+   if (identical(type, "info"))
+      type <- 1
+   else if (identical(type, "warning"))
+      type <- 2
+   else if (identical(type, "error"))
+      type <- 3
+   else if (identical(type, "question"))
+      type <- 4
+   else
+      stop("Invalid type specified")
+
+   result <- .Call("rs_userPrompt",
+         type,
+         caption,
+         message,
+         yesLabel,
+         noLabel,
+         includeCancel,
+         yesIsDefault)
+
+   if (result == 0)
+      "yes"
+   else if (result == 1)
+      "no"
+   else if (result == 2)
+      "cancel"
+   else
+      stop("Invalid result")
+})
+
+.rs.addFunction("restartR", function(afterRestartCommand = "") {
+   afterRestartCommand <- paste(as.character(afterRestartCommand),
+                                collapse = "\n")
+   .Call(.rs.routines$rs_restartR, afterRestartCommand)
+})
+
+
 
 

@@ -20,10 +20,13 @@
 
 #include <core/json/Json.hpp>
 
+namespace rstudio {
 namespace core {
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace session {
    
 namespace client_events {
@@ -45,7 +48,7 @@ extern const int kWorkingDirChanged;
 extern const int kPlotsStateChanged;
 extern const int kViewData;
 extern const int kPackageStatusChanged;
-extern const int kInstalledPackagesChanged;
+extern const int kPackageStateChanged;
 extern const int kLocator;
 extern const int kConsoleResetHistory;
 extern const int kSessionSerialization;
@@ -113,8 +116,18 @@ extern const int kRmdRenderCompleted;
 extern const int kRmdTemplateDiscovered;
 extern const int kRmdTemplateDiscoveryCompleted;
 extern const int kRmdShinyDocStarted;
-extern const int kRmdShinyAppsDeploymentOutput;
-extern const int kRmdShinyAppsDeploymentCompleted;
+extern const int kRmdRSConnectDeploymentOutput;
+extern const int kRmdRSConnectDeploymentCompleted;
+extern const int kUserPrompt;
+extern const int kInstallRtools;
+extern const int kInstallShiny;
+extern const int kSuspendAndRestart;
+extern const int kDataViewChanged;
+extern const int kViewFunction;
+extern const int kMarkersChanged;
+extern const int kEnableRStudioConnect;
+extern const int kUpdateGutterMarkers;
+extern const int kSnippetsChanged;
 }
    
 class ClientEvent
@@ -177,6 +190,7 @@ ClientEvent showErrorMessageEvent(const std::string& title,
                                   const std::string& message);
    
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_SESSION_CLIENT_EVENT_HPP
 

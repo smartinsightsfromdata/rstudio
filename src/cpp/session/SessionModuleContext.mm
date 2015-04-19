@@ -27,8 +27,10 @@
 #include <AppKit/NSPasteboard.h>
 #include <AppKit/NSImage.h>
 
-using namespace core;
+using namespace rstudio;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace module_context {
 
@@ -48,7 +50,8 @@ bool isOSXMavericks()
 
    [pool release];
 
-   return boost::algorithm::starts_with(version, "10.9");
+   return boost::algorithm::starts_with(version, "10.9") ||
+          boost::algorithm::starts_with(version, "10.10");
 }
 
 bool hasOSXMavericksDeveloperTools()
@@ -94,3 +97,4 @@ Error copyImageToCocoaPasteboard(const FilePath& imagePath)
 
 } // namespace module_context
 } // namespace session
+} // namespace rstudio

@@ -59,8 +59,9 @@
 
 #include <server/ServerConstants.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace server {
 namespace session_proxy {
    
@@ -537,8 +538,7 @@ void proxyLocalhostRequest(
    boost::smatch match;
    if (!boost::regex_search(request.uri(), match, re))
    {
-      ptrConnection->response().setError(http::status::NotFound,
-                                         request.uri() + " not found");
+      ptrConnection->response().setNotFoundError(request.uri());
       return;
    }
    std::string port = match[1];
@@ -590,5 +590,6 @@ void setProxyFilter(ProxyFilter filter)
 
 } // namespace session_proxy
 } // namespace server
+} // namespace rstudio
 
 

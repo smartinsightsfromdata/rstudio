@@ -14,6 +14,8 @@
  */
 package org.rstudio.studio.client.workbench.views.source.editors.text.ace;
 
+import org.rstudio.studio.client.workbench.views.output.lint.model.AceAnnotation;
+
 import com.google.gwt.core.client.JavaScriptObject;
 import com.google.gwt.core.client.JsArray;
 
@@ -24,9 +26,25 @@ public class EditSession extends JavaScriptObject
    public native final String getValue() /*-{
       return this.toString();
    }-*/;
+   
+   public native final String getState(int row) /*-{
+      return this.getState(row);
+   }-*/;
+   
+   public native final String getTabString() /*-{
+      return this.getTabString();
+   }-*/;
+   
+   public native final int getTabSize() /*-{
+      return this.getTabSize();
+   }-*/;
 
    public native final void setValue(String code) /*-{
       this.setValue(code);
+   }-*/;
+   
+   public native final void setUseWorker(boolean useWorker) /*-{
+      this.setUseWorker(useWorker);
    }-*/;
 
    public native final void insert(Position position, String text) /*-{
@@ -74,8 +92,14 @@ public class EditSession extends JavaScriptObject
 
    public native final void setEditorMode(String parserName,
                                           boolean suppressHighlighting) /*-{
+      // find the appropriate editor mode and check to see whether it matches
+      // the existing mode; if it does, no need to recreate it
       var Mode = $wnd.require(parserName).Mode;
-      this.setMode(new Mode(suppressHighlighting, this.getDocument(), this));
+      var existingMode = this.getMode();
+      if (existingMode && existingMode.constructor == Mode)
+         return;
+
+      this.setMode(new Mode(suppressHighlighting, this));
    }-*/;
 
    public native final Mode getMode() /*-{
@@ -168,4 +192,37 @@ public class EditSession extends JavaScriptObject
    public native final void clearBreakpoints(int[] lines) /*-{
       this.clearBreakpoints(lines);
    }-*/;
+   
+   public native final void setAnnotations(JsArray<AceAnnotation> annotations) /*-{
+      this.setAnnotations(annotations);
+   }-*/;
+   
+   public native final JsArray<AceAnnotation> getAnnotations() /*-{
+      return this.getAnnotations();
+   }-*/;
+   
+   public native final Markers getMarkers(boolean inFront) /*-{
+      return this.getMarkers(inFront);
+   }-*/;
+   
+   public native final Marker getMarker(int id) /*-{
+      return this.getMarkers(true)[id];
+   }-*/;
+   
+   public final native Range createAnchoredRange(Position start,
+                                                 Position end) /*-{
+      var Range = $wnd.require("ace/range").Range;
+      var result = new Range();
+      result.start = this.doc.createAnchor(start.row, start.column);
+      result.end = this.doc.createAnchor(end.row, end.column);
+      result.end.$insertRight = true;
+      return result;
+   }-*/;
+   
+   public native final void setWorkerTimeout(int delayMs) /*-{
+      var worker = this.$worker;
+      if (worker && worker.setTimeout)
+         worker.setTimeout(delayMs);
+   }-*/;
+
 }

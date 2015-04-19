@@ -22,10 +22,13 @@
 
 #include <core/Error.hpp>
 
+namespace rstudio {
 namespace core {
    class FilePath;
 }
+}
 
+namespace rstudio {
 namespace r {
 namespace session {
 namespace state {
@@ -41,6 +44,8 @@ bool saveMinimal(const core::FilePath& statePath,
 
 bool rProfileOnRestore(const core::FilePath& statePath);
 
+bool packratModeEnabled(const core::FilePath& statePath);
+
 bool restore(const core::FilePath& statePath, 
              bool serverMode,
              boost::function<core::Error()>* pDeferredRestoreAction,
@@ -51,6 +56,7 @@ bool destroy(const core::FilePath& statePath);
 } // namespace state
 } // namespace session
 } // namespace r
+} // namespace rstudio
 
 #endif // R_R_SESSION_STATE_HPP
 

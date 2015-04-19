@@ -28,6 +28,8 @@
 
 #include <core/system/Environment.hpp>
 
+#include <core/r_util/RSessionContext.hpp>
+
 #import "SessionLauncher.hpp"
 
 #import "MainFrameController.h"
@@ -39,8 +41,10 @@
                    std::cout << (message) << std::endl;
 
 
-using namespace core;
+using namespace rstudio;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace desktop {
    
 namespace {
@@ -113,6 +117,10 @@ Error SessionLauncher::launchFirstSession(const std::string& filename)
    std::string host, port, appUrl;
    std::vector<std::string> argList;
    buildLaunchContext(&host, &port, &argList, &appUrl);
+
+   // show help home for first session
+   argList.push_back("--show-help-home");
+   argList.push_back("1");
    
    RUN_DIAGNOSTICS_LOG("\nAttempting to launch R session...");
    logEnvVar("RSTUDIO_WHICH_R");
@@ -391,4 +399,5 @@ void SessionLauncher::closeAllWindows()
 
 
 } // namespace desktop
+} // namespace rstudio
 

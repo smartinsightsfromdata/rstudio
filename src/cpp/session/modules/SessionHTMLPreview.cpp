@@ -54,8 +54,9 @@
 #define kHTMLPreview "html_preview"
 #define kHTMLPreviewLocation "/" kHTMLPreview "/"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace html_preview {
@@ -214,7 +215,8 @@ private:
       outputPathTempFile_ = outputFileTempFile;
       encoding_ = encoding;
 
-      async_r::AsyncRProcess::start(cmd.c_str(), targetFile_.parent());
+      async_r::AsyncRProcess::start(cmd.c_str(), targetFile_.parent(),
+                                    async_r::R_PROCESS_REDIRECTSTDERR);
    }
 
    bool targetIsRMarkdown()
@@ -392,11 +394,6 @@ private:
                                 htmlPreviewFile(),
                                 isMarkdown(),
                                 !isNotebook());
-   }
-
-   bool redirectStdErrToStdOut()
-   {
-      return true;
    }
 
    static void enqueHTMLPreviewStarted(const FilePath& targetFile)
@@ -762,13 +759,7 @@ void modifyOutputForPreview(std::string* pOutput)
             boost::regex("tt, code, pre \\{\\n\\s+font-family:[^\n]+;"),
            "tt, code, pre {\n   font-family: " + preFontFamily() + ";");
 
-#ifdef __APPLE__
-      // use SVG fonts on MacOS (because HTML-CSS fonts crash QtWebKit)
-       boost::algorithm::replace_first(
-                *pOutput,
-                "config=TeX-AMS-MML_HTMLorMML",
-                "config=TeX-AMS-MML_SVG");
-#else
+#if defined(_WIN32)
       // add HTML-CSS options required for correct qtwebkit rendering
       std::string target = "<!-- MathJax scripts -->";
       boost::algorithm::replace_first(
@@ -779,10 +770,10 @@ void modifyOutputForPreview(std::string* pOutput)
    }
 
    // serve mathjax locally
-   std::string previewMathjax = "mathjax";
+   std::string previewMathjax = "mathjax-23";
    boost::algorithm::replace_first(
         *pOutput,
-        "https://c328740.ssl.cf1.rackcdn.com/mathjax/2.0-latest",
+        "https://cdn.mathjax.org/mathjax/latest",
         previewMathjax);
 }
 
@@ -908,7 +899,7 @@ void handlePreviewRequest(const http::Request& request,
    // if there isn't a current preview this is an error
    if (!s_pCurrentPreview_)
    {
-      pResponse->setError(http::status::NotFound, "No preview available");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -941,8 +932,9 @@ void handlePreviewRequest(const http::Request& request,
    }
 
    // request for mathjax file
-   else if (boost::algorithm::starts_with(path, "mathjax"))
+   else if (boost::algorithm::starts_with(path, "mathjax-23"))
    {
+
       FilePath filePath =
             session::options().mathjaxPath().parent().childPath(path);
       pResponse->setFile(filePath, request);
@@ -1030,4 +1022,5 @@ Error initialize()
 } // namespace html_preview
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

@@ -77,6 +77,7 @@
 
 #include "config.h"
 
+namespace rstudio {
 namespace core {
 namespace system {
 
@@ -206,6 +207,12 @@ void initializeLog(const std::string& programIdentity,
       delete s_pLogWriter;
 
    s_pLogWriter = new FileLogWriter(programIdentity, logLevel, logDir);
+}
+
+void setLogToStderr(bool logToStderr)
+{
+   if (s_pLogWriter)
+      s_pLogWriter->setLogToStderr(logToStderr);
 }
 
 void addLogWriter(boost::shared_ptr<core::LogWriter> pLogWriter)
@@ -1115,9 +1122,6 @@ void printCoreDumpable(const std::string& context)
    std::cerr << ostr.str();
 }
 
-
-namespace {
-
 void setProcessLimits(ProcessLimits limits)
 {
    // memory limit
@@ -1186,6 +1190,11 @@ void setProcessLimits(ProcessLimits limits)
    }
 #endif
 }
+
+
+
+namespace {
+
 
 void copyEnvironmentVar(const std::string& name,
                         core::system::Options* pVars,
@@ -1756,4 +1765,5 @@ Error restorePriv()
 
 } // namespace system
 } // namespace core
+} // namespace rstudio
 

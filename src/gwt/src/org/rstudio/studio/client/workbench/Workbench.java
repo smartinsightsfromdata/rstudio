@@ -18,11 +18,13 @@ import com.google.gwt.core.client.GWT;
 import com.google.inject.Inject;
 import com.google.inject.Provider;
 
+import org.rstudio.core.client.BrowseCap;
 import org.rstudio.core.client.StringUtil;
 import org.rstudio.core.client.TimeBufferedCommand;
 import org.rstudio.core.client.command.CommandBinder;
 import org.rstudio.core.client.command.Handler;
 import org.rstudio.core.client.files.FileSystemItem;
+import org.rstudio.core.client.widget.Operation;
 import org.rstudio.core.client.widget.ProgressIndicator;
 import org.rstudio.core.client.widget.ProgressOperationWithInput;
 import org.rstudio.studio.client.application.Desktop;
@@ -45,6 +47,7 @@ import org.rstudio.studio.client.rmarkdown.RmdOutput;
 import org.rstudio.studio.client.server.Server;
 import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
+import org.rstudio.studio.client.server.Void;
 import org.rstudio.studio.client.server.VoidServerRequestCallback;
 import org.rstudio.studio.client.shiny.ShinyApplication;
 import org.rstudio.studio.client.workbench.commands.Commands;
@@ -61,11 +64,13 @@ import org.rstudio.studio.client.workbench.views.vcs.git.model.GitState;
 
 public class Workbench implements BusyHandler,
                                   ShowErrorMessageHandler,
+                                  UserPromptHandler,
                                   ShowWarningBarHandler,
                                   BrowseUrlHandler,
                                   QuotaStatusHandler,
                                   WorkbenchLoadedHandler,
-                                  WorkbenchMetricsChangedHandler
+                                  WorkbenchMetricsChangedHandler,
+                                  InstallRtoolsEvent.Handler
 {
    interface Binder extends CommandBinder<Commands, Workbench> {}
    
@@ -90,7 +95,7 @@ public class Workbench implements BusyHandler,
                     ProfilerPresenter prof,  // required to force gin to create
                     ShinyApplication sApp,   // required to force gin to create
                     DependencyManager dm,    // required to force gin to create
-                    RmdOutput rmdOutput)     // required to force gin to create
+                    RmdOutput rmdOutput)     // required to force gin to create    
   {
       view_ = view;
       workbenchContext_ = workbenchContext;
@@ -111,11 +116,13 @@ public class Workbench implements BusyHandler,
       // edit
       eventBus.addHandler(BusyEvent.TYPE, this);
       eventBus.addHandler(ShowErrorMessageEvent.TYPE, this);
+      eventBus.addHandler(UserPromptEvent.TYPE, this);
       eventBus.addHandler(ShowWarningBarEvent.TYPE, this);
       eventBus.addHandler(BrowseUrlEvent.TYPE, this);
       eventBus.addHandler(QuotaStatusEvent.TYPE, this);
       eventBus.addHandler(WorkbenchLoadedEvent.TYPE, this);
       eventBus.addHandler(WorkbenchMetricsChangedEvent.TYPE, this);
+      eventBus.addHandler(InstallRtoolsEvent.TYPE, this);
 
       // We don't want to send setWorkbenchMetrics more than once per 1/2-second
       metricsChangedCommand_ = new TimeBufferedCommand(-1, -1, 500)
@@ -264,6 +271,18 @@ public class Workbench implements BusyHandler,
    }
    
    @Handler
+   void onSetWorkingDirToProjectDir()
+   {
+      FileSystemItem projectDir = session_.getSessionInfo()
+            .getActiveProjectDir();
+      if (projectDir != null)
+      {
+         consoleDispatcher_.executeSetWd(projectDir, false);
+         eventBus_.fireEvent(new DirectoryNavigateEvent(projectDir, true));
+      }
+   }
+   
+   @Handler
    public void onSourceFile()
    {
       fileDialogs_.openFile(
@@ -394,7 +413,57 @@ public class Workbench implements BusyHandler,
       }
    }
     
-
+   
+   public void onUserPrompt(UserPromptEvent event)
+   {
+      // is cancel supported?
+      UserPrompt userPrompt = event.getUserPrompt();
+                
+      // resolve labels
+      String yesLabel = userPrompt.getYesLabel();
+      if (StringUtil.isNullOrEmpty(yesLabel))
+         yesLabel = "Yes";
+      String noLabel = userPrompt.getNoLabel();
+      if (StringUtil.isNullOrEmpty(noLabel))
+         noLabel = "No";
+         
+      // show dialog
+      globalDisplay_.showYesNoMessage(
+                 userPrompt.getType(),
+                 userPrompt.getCaption(),
+                 userPrompt.getMessage(),
+                 userPrompt.getIncludeCancel(),
+                 userPromptResponse(UserPrompt.RESPONSE_YES),
+                 userPromptResponse(UserPrompt.RESPONSE_NO),
+                 userPrompt.getIncludeCancel() ?
+                       userPromptResponse(UserPrompt.RESPONSE_CANCEL) : null,
+                 yesLabel, 
+                 noLabel, 
+                 userPrompt.getYesIsDefault());
+   }
+   
+   private Operation userPromptResponse(final int response)
+   {
+      return new Operation() {
+         public void execute()
+         {
+            server_.userPromptCompleted(response, 
+                                        new SimpleRequestCallback<Void>());
+            
+         }
+      };
+   }
+   
+   @Override
+   public void onInstallRtools(final InstallRtoolsEvent event)
+   {
+      if (BrowseCap.isWindowsDesktop())
+      {
+         Desktop.getFrame().installRtools(event.getVersion(),
+                                          event.getInstallerPath());  
+      }
+   }
+   
    private final Server server_;
    private final EventBus eventBus_;
    private final Session session_;
@@ -410,5 +479,5 @@ public class Workbench implements BusyHandler,
    private final Provider<GitState> pGitState_;
    private final TimeBufferedCommand metricsChangedCommand_;
    private WorkbenchMetrics lastWorkbenchMetrics_;
-   private boolean nearQuotaWarningShown_ = false; 
+   private boolean nearQuotaWarningShown_ = false;
 }

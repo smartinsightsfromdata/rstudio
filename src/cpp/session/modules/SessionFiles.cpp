@@ -60,8 +60,9 @@
 #include "SessionFilesQuotas.hpp"
 #include "SessionFilesListingMonitor.hpp"
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {
 
 namespace modules { 
@@ -308,7 +309,7 @@ core::Error deleteFiles(const core::json::JsonRpcRequest& request,
 }
    
    
-void copySourceFile(const FilePath& sourceDir, 
+bool copySourceFile(const FilePath& sourceDir, 
                     const FilePath& destDir,
                     int level,
                     const FilePath& sourceFilePath)
@@ -331,6 +332,7 @@ void copySourceFile(const FilePath& sourceDir,
       if (error)
          LOG_ERROR(error);
    }
+   return true;
 }
    
 // IN: String sourcePath, String targetPath
@@ -462,8 +464,7 @@ void handleFilesRequest(const http::Request& request,
    Options& options = session::options();
    if (options.programMode() != kSessionProgramModeServer)
    {
-      pResponse->setError(http::status::NotFound,
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -479,8 +480,7 @@ void handleFilesRequest(const http::Request& request,
        uri.find(prefix) != 0 ||              // uri doesn't start with prefix
        uri.find("..") != std::string::npos)  // uri has inavlid char sequence
    {
-      pResponse->setError(http::status::NotFound, 
-                          request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
    
@@ -489,7 +489,7 @@ void handleFilesRequest(const http::Request& request,
    std::string relativePath = http::util::urlDecode(uri.substr(prefixLen));
    if (relativePath.empty())
    {
-      pResponse->setError(http::status::NotFound, request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -499,8 +499,7 @@ void handleFilesRequest(const http::Request& request,
    // no directory listing available
    if (filePath.isDirectory())
    {
-      pResponse->setError(http::status::NotFound,
-                          "No listing available for " + request.uri());
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -821,7 +820,7 @@ void handleFileExportRequest(const http::Request& request,
       FilePath filePath = module_context::resolveAliasedPath(file);
       if (!filePath.exists())
       {
-         pResponse->setError(http::status::NotFound, "file doesn't exist");
+         pResponse->setNotFoundError(request.uri());
          return;
       }
       
@@ -940,4 +939,5 @@ Error initialize()
 } // namepsace files
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

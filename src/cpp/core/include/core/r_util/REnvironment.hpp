@@ -19,6 +19,9 @@
 #include <string>
 #include <vector>
 
+#include <core/system/Types.hpp>
+
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -32,13 +35,26 @@ bool detectREnvironment(const FilePath& whichRScript,
                         const FilePath& ldPathsScript,
                         const std::string& ldLibraryPath,
                         std::string* pRScriptPath,
+                        std::string* pVersion,
                         EnvironmentVars* pVars,
                         std::string* pErrMsg);
 
 void setREnvironmentVars(const EnvironmentVars& vars);
+void setREnvironmentVars(const EnvironmentVars& vars,
+                         core::system::Options* pEnv);
+
+std::string rLibraryPath(const FilePath& rHomePath,
+                         const FilePath& rLibPath,
+                         const FilePath& ldPathsScript,
+                         const std::string& ldLibraryPath);
+
+Error rVersion(const FilePath& rHomePath,
+               const FilePath& rScriptPath,
+               std::string* pVersion);
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_ENVIRONMENT_HPP

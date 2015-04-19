@@ -44,8 +44,9 @@
 #include "SlideParser.hpp"
 #include "SlideRenderer.hpp"
 
-using namespace core;
+using namespace rstudio::core;
 
+namespace rstudio {
 namespace session {
 namespace modules { 
 namespace presentation {
@@ -145,14 +146,14 @@ std::string alternateMathjax(const std::string& prefix)
 {
    return boost::algorithm::replace_first_copy(
         remoteMathjax(),
-        "https://c328740.ssl.cf1.rackcdn.com/mathjax/2.0-latest",
+        "https://cdn.mathjax.org/mathjax/latest",
         prefix);
 }
 
 
 std::string localMathjax()
 {
-   return alternateMathjax("mathjax");
+   return alternateMathjax("mathjax-23");
 }
 
 std::string copiedMathjax(const FilePath& targetFile)
@@ -182,7 +183,7 @@ std::string copiedMathjax(const FilePath& targetFile)
    }
 
    // return fixed up html
-   return alternateMathjax(presFilesDir + "/mathjax");
+   return alternateMathjax(presFilesDir + "/mathjax-23");
 }
 
 std::string localWebFonts()
@@ -1104,7 +1105,7 @@ void handlePresentationPaneRequest(const http::Request& request,
    // return not found if presentation isn't active
    if (!presentation::state::isActive())
    {
-      pResponse->setError(http::status::NotFound, request.uri() + " not found");
+      pResponse->setNotFoundError(request.uri());
       return;
    }
 
@@ -1136,7 +1137,7 @@ void handlePresentationPaneRequest(const http::Request& request,
    }
 
    // special handling for mathjax assets
-   else if (boost::algorithm::starts_with(path, "mathjax/"))
+   else if (boost::algorithm::starts_with(path, "mathjax-23/"))
    {
       FilePath filePath =
             session::options().mathjaxPath().parent().childPath(path);
@@ -1184,7 +1185,7 @@ void handlePresentationHelpRequest(const core::http::Request& request,
       FilePath filePath = module_context::resolveAliasedPath(file);
       if (!filePath.exists())
       {
-         pResponse->setError(http::status::NotFound, request.uri());
+         pResponse->setNotFoundError(request.uri());
          return;
       }
 
@@ -1214,9 +1215,7 @@ void handlePresentationHelpRequest(const core::http::Request& request,
       // make sure the directory exists
       if (!s_presentationHelpDir.exists())
       {
-         pResponse->setError(http::status::NotFound,
-                             "Directory not found: " +
-                             s_presentationHelpDir.absolutePath());
+         pResponse->setNotFoundError(s_presentationHelpDir.absolutePath());
          return;
       }
 
@@ -1253,4 +1252,5 @@ bool savePresentationAsRpubsSource(const core::FilePath& filePath,
 } // namespace presentation
 } // namespace modules
 } // namesapce session
+} // namespace rstudio
 

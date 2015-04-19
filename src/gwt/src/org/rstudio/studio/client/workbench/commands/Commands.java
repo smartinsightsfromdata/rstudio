@@ -27,6 +27,7 @@ public abstract class
    public abstract AppCommand setWorkingDir();
    
    // Source
+   public abstract AppCommand reformatCode();
    public abstract AppCommand newSourceDoc();
    public abstract AppCommand newTextDoc();
    public abstract AppCommand newCppDoc();
@@ -48,6 +49,7 @@ public abstract class
    public abstract AppCommand sourceActiveDocument();
    public abstract AppCommand sourceActiveDocumentWithEcho();
    public abstract AppCommand executeCode();
+   public abstract AppCommand executeCodeWithoutMovingCursor();
    public abstract AppCommand executeCodeWithoutFocus();
    public abstract AppCommand executeToCurrentLine();
    public abstract AppCommand executeFromCurrentLine();
@@ -82,6 +84,7 @@ public abstract class
    public abstract AppCommand findReplace();
    public abstract AppCommand findNext();
    public abstract AppCommand findPrevious();
+   public abstract AppCommand findSelectAll();
    public abstract AppCommand findFromSelection();
    public abstract AppCommand replaceAndFind();
    public abstract AppCommand findInFiles();
@@ -90,6 +93,8 @@ public abstract class
    public abstract AppCommand foldAll();
    public abstract AppCommand unfoldAll();
    public abstract AppCommand jumpToMatching();
+   public abstract AppCommand selectToMatching();
+   public abstract AppCommand expandToMatching();
    public abstract AppCommand extractFunction();
    public abstract AppCommand extractLocalVariable();
    public abstract AppCommand commentUncomment();
@@ -97,7 +102,10 @@ public abstract class
    public abstract AppCommand reflowComment();
    public abstract AppCommand setWorkingDirToActiveDoc();
    public abstract AppCommand codeCompletion();
+   public abstract AppCommand findUsages();
    public abstract AppCommand editRmdFormatOptions();
+   public abstract AppCommand insertRoxygenSkeleton();
+   public abstract AppCommand insertSnippet();
  
    // Projects
    public abstract AppCommand newProject();
@@ -117,6 +125,7 @@ public abstract class
    public abstract AppCommand closeProject();
    public abstract AppCommand projectOptions();
    public abstract AppCommand projectSweaveOptions();
+   public abstract AppCommand setWorkingDirToProjectDir();
 
    // Console
    public abstract AppCommand consoleClear();
@@ -230,6 +239,7 @@ public abstract class
    public abstract AppCommand savePlotAsImage();
    public abstract AppCommand savePlotAsPdf();
    public abstract AppCommand copyPlotToClipboard();
+   public abstract AppCommand publishPlotToRPubs();
    public abstract AppCommand zoomPlot();
    public abstract AppCommand removePlot();
    public abstract AppCommand clearPlots();
@@ -242,6 +252,13 @@ public abstract class
    public abstract AppCommand updatePackages();
    public abstract AppCommand refreshPackages();
    public abstract AppCommand activatePackages();
+   
+   // // packrat
+   public abstract AppCommand packratBootstrap();
+   public abstract AppCommand packratOptions();
+   public abstract AppCommand packratBundle();
+   public abstract AppCommand packratHelp();
+   public abstract AppCommand packratClean();
 
    // Version control
    public abstract AppCommand versionControlHelp();
@@ -282,9 +299,18 @@ public abstract class
    
    // Viewer
    public abstract AppCommand viewerPopout();
+   public abstract AppCommand viewerBack(); 
+   public abstract AppCommand viewerForward();
+   public abstract AppCommand viewerZoom();
    public abstract AppCommand viewerRefresh();
+   public abstract AppCommand viewerSaveAllAndRefresh();
    public abstract AppCommand viewerStop();
    public abstract AppCommand viewerClear();
+   public abstract AppCommand viewerClearAll();
+   public abstract AppCommand viewerSaveAsImage();
+   public abstract AppCommand viewerSaveAsWebPage();
+   public abstract AppCommand viewerCopyToClipboard();
+   public abstract AppCommand viewerPublishToRPubs();
 
    // Application
    public abstract AppCommand quitSession();
@@ -341,6 +367,8 @@ public abstract class
    public abstract AppCommand errorsMessage();
    public abstract AppCommand errorsTraceback();
    public abstract AppCommand errorsBreak();
+   public abstract AppCommand showDiagnosticsActiveDocument();
+   public abstract AppCommand showDiagnosticsProject();
    
    // Shiny IDE features
    public abstract AppCommand reloadShinyApp();
@@ -348,10 +376,10 @@ public abstract class
    public abstract AppCommand shinyRunInViewer();
    public abstract AppCommand shinyRunInBrowser();
    
-   // ShinyApps connectivity
-   public abstract AppCommand shinyAppsDeploy();
-   public abstract AppCommand shinyAppsManageAccounts();
-   public abstract AppCommand shinyAppsTerminate();
+   // RSConnect connectivity
+   public abstract AppCommand rsconnectDeploy();
+   public abstract AppCommand rsconnectConfigure();
+   public abstract AppCommand rsconnectManageAccounts();
 
    // Other
    public abstract AppCommand checkSpelling();   

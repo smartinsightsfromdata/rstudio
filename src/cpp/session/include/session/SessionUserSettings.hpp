@@ -29,6 +29,7 @@
 
 #include <core/system/FileChangeEvent.hpp>
 
+namespace rstudio {
 namespace session {
 
 // singleton
@@ -167,6 +168,24 @@ public:
    bool useDevtools() const;
    void setUseDevtools(bool useDevtools);
 
+   int clangVerbose() const;
+   void setClangVerbose(int level);
+   
+   bool lintRFunctionCalls() const;
+   void setLintRFunctionCalls(bool enable);
+   
+   bool checkArgumentsToRFunctionCalls() const;
+   void setCheckArgumentsToRFunctionCalls(bool check);
+   
+   bool warnIfNoSuchVariableInScope() const;
+   void setWarnIfNoSuchVariableInScope(bool enable);
+   
+   bool warnIfVariableDefinedButNotUsed() const;
+   void setWarnIfVariableDefinedButNotUsed(bool enable);
+   
+   bool enableStyleDiagnostics() const;
+   void setEnableStyleDiagnostics(bool enable);
+
 private:
 
    void onSettingsFileChanged(
@@ -204,9 +223,17 @@ private:
    mutable boost::scoped_ptr<core::json::Array> pSpellingCustomDicts_;
    mutable boost::scoped_ptr<bool> pHandleErrorsInUserCodeOnly_;
    mutable boost::scoped_ptr<int> pShinyViewerType_;
+   
+   // diagnostic-related prefs
+   mutable boost::scoped_ptr<bool> pLintRFunctionCalls_;
+   mutable boost::scoped_ptr<bool> pCheckArgumentsToRFunctionCalls_;
+   mutable boost::scoped_ptr<bool> pWarnIfNoSuchVariableInScope_;
+   mutable boost::scoped_ptr<bool> pWarnIfVariableDefinedButNotUsed_;
+   mutable boost::scoped_ptr<bool> pEnableStyleDiagnostics_;
 };
    
 } // namespace session
+} // namespace rstudio
 
 #endif // SESSION_USER_SETTINGS_HPP
 

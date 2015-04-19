@@ -19,6 +19,9 @@
 #include <string>
 #include <iosfwd>
 
+#include <core/r_util/RVersionInfo.hpp>
+
+namespace rstudio {
 namespace core {
 
 class Error;
@@ -54,6 +57,7 @@ struct RProjectConfig
 {
    RProjectConfig()
       : version(1.0),
+        rVersion(kRVersionDefault),
         saveWorkspace(DefaultValue),
         restoreWorkspace(DefaultValue),
         alwaysSaveHistory(DefaultValue),
@@ -81,6 +85,7 @@ struct RProjectConfig
    }
 
    double version;
+   RVersionInfo rVersion;
    int saveWorkspace;
    int restoreWorkspace;
    int alwaysSaveHistory;
@@ -108,8 +113,12 @@ struct RProjectConfig
 
 
 Error readProjectFile(const FilePath& projectFilePath,
+                      RProjectConfig* pConfig,
+                      std::string* pUserErrMsg);
+
+Error readProjectFile(const FilePath& projectFilePath,
                       const RProjectConfig& defaultConfig,
-                      const RProjectBuildDefaults& buildDefauls,
+                      const RProjectBuildDefaults& buildDefaults,
                       RProjectConfig* pConfig,
                       bool* pProvidedDefaults,
                       std::string* pUserErrMsg);
@@ -126,6 +135,7 @@ bool updateSetPackageInstallArgsDefault(RProjectConfig* pConfig);
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_PROJECT_FILE_HPP

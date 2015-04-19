@@ -13,44 +13,34 @@
  *
  */
 
-#include "SessionBuildEnvironment.hpp"
-
 #include <string>
 #include <vector>
 
 #include <boost/regex.hpp>
 #include <boost/format.hpp>
+#include <boost/foreach.hpp>
 
 #include <core/Error.hpp>
 #include <core/FilePath.hpp>
 
 #include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
+#include <core/system/Environment.hpp>
 #include <core/r_util/RToolsInfo.hpp>
 
 #include <r/RExec.hpp>
 
 #include <session/SessionModuleContext.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
-namespace session {  
-namespace modules {
-namespace build {
+namespace rstudio {
+namespace session {
+namespace module_context {
 
 #ifdef _WIN32
 
 namespace {
-
-bool isRtoolsCompatible(const r_util::RToolsInfo& rTools)
-{
-   bool isCompatible = false;
-   Error error = r::exec::evaluateString(rTools.versionPredicate(),
-                                         &isCompatible);
-   if (error)
-      LOG_ERROR(error);
-   return isCompatible;
-}
 
 r_util::RToolsInfo scanPathForRTools()
 {
@@ -106,7 +96,9 @@ std::string formatPath(const FilePath& filePath)
 }
 
 template <typename T>
-bool doAddRtoolsToPathIfNecessary(T* pTarget, std::string* pWarningMessage)
+bool doAddRtoolsToPathIfNecessary(T* pTarget,
+                                  std::vector<core::system::Option>* pEnvironmentVars,
+                                  std::string* pWarningMessage)
 {
     // can we find ls.exe and gcc.exe on the path? if so then
     // we assume Rtools are already there (this is the same test
@@ -122,7 +114,7 @@ bool doAddRtoolsToPathIfNecessary(T* pTarget, std::string* pWarningMessage)
        r_util::RToolsInfo rTools = scanPathForRTools();
        if (!rTools.empty())
        {
-          if (!isRtoolsCompatible(rTools))
+          if (!module_context::isRtoolsCompatible(rTools))
           {
             boost::format fmt(
              "WARNING: Rtools version %1% is on the PATH (intalled at %2%) "
@@ -155,9 +147,10 @@ bool doAddRtoolsToPathIfNecessary(T* pTarget, std::string* pWarningMessage)
     std::vector<r_util::RToolsInfo>::const_reverse_iterator it = rTools.rbegin();
     for ( ; it != rTools.rend(); ++it)
     {
-       if (isRtoolsCompatible(*it))
+       if (module_context::isRtoolsCompatible(*it))
        {
           r_util::prependToSystemPath(*it, pTarget);
+          *pEnvironmentVars = it->environmentVars();
           return true;
        }
     }
@@ -201,22 +194,64 @@ bool doAddRtoolsToPathIfNecessary(T* pTarget, std::string* pWarningMessage)
 
 } // anonymous namespace
 
+bool isRtoolsCompatible(const r_util::RToolsInfo& rTools)
+{
+   bool isCompatible = false;
+   Error error = r::exec::evaluateString(rTools.versionPredicate(),
+                                         &isCompatible);
+   if (error)
+      LOG_ERROR(error);
+   return isCompatible;
+}
 
 bool addRtoolsToPathIfNecessary(std::string* pPath,
                                 std::string* pWarningMessage)
 {
-   return doAddRtoolsToPathIfNecessary(pPath, pWarningMessage);
+   std::vector<core::system::Option> environmentVars;
+   if (doAddRtoolsToPathIfNecessary(pPath,
+                                    &environmentVars,
+                                    pWarningMessage))
+   {
+      BOOST_FOREACH(const core::system::Option& var, environmentVars)
+      {
+         core::system::setenv(var.first, var.second);
+      }
+      return true;
+   }
+   else
+   {
+      return false;
+   }
 }
 
 bool addRtoolsToPathIfNecessary(core::system::Options* pEnvironment,
                                 std::string* pWarningMessage)
 {
-   return doAddRtoolsToPathIfNecessary(pEnvironment, pWarningMessage);
+   std::vector<core::system::Option> environmentVars;
+   if (doAddRtoolsToPathIfNecessary(pEnvironment,
+                                    &environmentVars,
+                                    pWarningMessage))
+   {
+      BOOST_FOREACH(const core::system::Option& var, environmentVars)
+      {
+         core::system::setenv(pEnvironment, var.first, var.second);
+      }
+      return true;
+   }
+   else
+   {
+      return false;
+   }
 }
 
 
 #else
 
+bool isRtoolsCompatible(const r_util::RToolsInfo& rTools)
+{
+   return false;
+}
+
 bool addRtoolsToPathIfNecessary(std::string* pPath,
                                 std::string* pWarningMessage)
 {
@@ -228,10 +263,8 @@ bool addRtoolsToPathIfNecessary(core::system::Options* pEnvironment,
 {
    return false;
 }
-
 #endif
 
-
-} // namespace build
-} // namespace modules
+} // namespace module_context
 } // namespace session
+} // namespace rstudio

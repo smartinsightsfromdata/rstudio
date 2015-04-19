@@ -26,10 +26,13 @@
 #include <core/ProgramOptions.hpp>
 #include <core/SafeConvert.hpp>
 
+namespace rstudio {
 namespace core {
    class ProgramStatus;
 }
+}
 
+namespace rstudio {
 namespace server {
 
 // singleton
@@ -72,6 +75,8 @@ public:
    bool serverDaemonize() const { return serverDaemonize_; }
 
    bool serverAppArmorEnabled() const { return serverAppArmorEnabled_; }
+
+   bool serverSetUmask() const { return serverSetUmask_; }
 
    // www 
    std::string wwwAddress() const
@@ -224,6 +229,7 @@ private:
    std::string serverUser_;
    bool serverDaemonize_;
    bool serverAppArmorEnabled_;
+   bool serverSetUmask_;
    bool serverOffline_;
    std::string wwwAddress_ ;
    std::string wwwPort_ ;
@@ -248,6 +254,7 @@ private:
 };
       
 } // namespace server
+} // namespace rstudio
 
 #endif // SERVER_SERVER_OPTIONS_HPP
 

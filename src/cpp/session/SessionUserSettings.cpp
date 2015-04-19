@@ -23,6 +23,8 @@
 #include <core/FilePath.hpp>
 #include <core/system/System.hpp>
 
+#include <core/r_util/RSessionContext.hpp>
+
 #include <session/SessionModuleContext.hpp>
 #include <session/SessionOptions.hpp>
 #include "modules/SessionErrors.hpp"
@@ -33,8 +35,9 @@
 #include <r/session/RSession.hpp>
 #include <r/session/RConsoleHistory.hpp>
 
-using namespace core ;
+using namespace rstudio::core ;
 
+namespace rstudio {
 namespace session {  
    
 #define kAgreementPrefix "agreement."
@@ -44,7 +47,6 @@ const char * const kContextId ="contextIdentifier";
 const char * const kAgreementHash = kAgreementPrefix "agreedToHash";
 const char * const kAutoCreatedProfile = "autoCreatedProfile";
 const char * const kUiPrefs = "uiPrefs";
-const char * const kAlwaysRestoreLastProject = "restoreLastProject";
 const char * const kRProfileOnResume = "rprofileOnResume";
 const char * const kSaveAction = "saveAction";
 const char * const kLoadRData = "loadRData";
@@ -148,7 +150,7 @@ void UserSettings::onSettingsFileChanged(
       setBioconductorReposOption(bioconductorMirrorURL);
 
    // update remove dups in underlying R session
-   using namespace r::session;
+   using namespace rstudio::r::session;
    consoleHistory().setRemoveDuplicates(removeHistoryDuplicates());
 
    // fire event so others can react appropriately
@@ -273,6 +275,21 @@ void UserSettings::updatePrefsCache(const json::Object& prefs) const
 
    int shinyViewerType = readPref<int>(prefs, "shiny_viewer_type", modules::shiny_viewer::SHINY_VIEWER_WINDOW);
    pShinyViewerType_.reset(new int(shinyViewerType));
+   
+   bool lintRFunctionCalls = readPref<bool>(prefs, "diagnostics_in_function_calls", true);
+   pLintRFunctionCalls_.reset(new bool(lintRFunctionCalls));
+   
+   bool checkArgumentsToRFunctionCalls = readPref<bool>(prefs, "check_arguments_to_r_function_calls", true);
+   pCheckArgumentsToRFunctionCalls_.reset(new bool(checkArgumentsToRFunctionCalls));
+
+   bool warnIfNoSuchVariableInScope = readPref<bool>(prefs, "warn_if_no_such_variable_in_scope", true);
+   pWarnIfNoSuchVariableInScope_.reset(new bool(warnIfNoSuchVariableInScope));
+
+   bool warnIfVariableDefinedButNotUsed = readPref<bool>(prefs, "warn_if_variable_defined_but_not_used", true);
+   pWarnIfVariableDefinedButNotUsed_.reset(new bool(warnIfVariableDefinedButNotUsed));
+
+   bool enableStyleDiagnostics = readPref<bool>(prefs, "enable_style_diagnostics", false);
+   pEnableStyleDiagnostics_.reset(new bool(enableStyleDiagnostics));
 }
 
 
@@ -331,6 +348,31 @@ bool UserSettings::handleErrorsInUserCodeOnly() const
 int UserSettings::shinyViewerType() const
 {
    return readUiPref<int>(pShinyViewerType_);
+}
+
+bool UserSettings::lintRFunctionCalls() const
+{
+   return readUiPref<bool>(pLintRFunctionCalls_);
+}
+
+bool UserSettings::checkArgumentsToRFunctionCalls() const
+{
+   return readUiPref<bool>(pCheckArgumentsToRFunctionCalls_);
+}
+
+bool UserSettings::warnIfNoSuchVariableInScope() const
+{
+   return readUiPref<bool>(pWarnIfNoSuchVariableInScope_);
+}
+
+bool UserSettings::warnIfVariableDefinedButNotUsed() const
+{
+   return readUiPref<bool>(pWarnIfVariableDefinedButNotUsed_);
+}
+
+bool UserSettings::enableStyleDiagnostics() const
+{
+   return readUiPref<bool>(pEnableStyleDiagnostics_);
 }
 
 std::vector<std::string> UserSettings::spellingCustomDictionaries() const
@@ -643,4 +685,25 @@ void UserSettings::setUseDevtools(bool useDevtools)
    settings_.set("useDevtools", useDevtools);
 }
 
-}// namespace session
+int UserSettings::clangVerbose() const
+{
+   return settings_.getInt("clangVerbose", 0);
+}
+
+void UserSettings::setClangVerbose(int level)
+{
+   settings_.set("clangVerbose", level);
+}
+
+void UserSettings::setEnableStyleDiagnostics(bool enable)
+{
+   settings_.set("enableStyleDiagnostics", enable);
+}
+
+void UserSettings::setLintRFunctionCalls(bool enable)
+{
+   settings_.set("lintRFunctionCalls", enable);
+}
+
+} // namespace session
+} // namespace rstudio

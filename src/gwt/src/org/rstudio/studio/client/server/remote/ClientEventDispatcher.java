@@ -27,7 +27,6 @@ import org.rstudio.core.client.jsonrpc.RpcObjectList;
 import org.rstudio.studio.client.application.events.*;
 import org.rstudio.studio.client.application.model.SaveAction;
 import org.rstudio.studio.client.application.model.SessionSerializationAction;
-import org.rstudio.studio.client.common.compile.CompileError;
 import org.rstudio.studio.client.common.compile.CompileOutput;
 import org.rstudio.studio.client.common.compilepdf.events.CompilePdfCompletedEvent;
 import org.rstudio.studio.client.common.compilepdf.events.CompilePdfErrorsEvent;
@@ -44,7 +43,9 @@ import org.rstudio.studio.client.common.debugging.events.PackageUnloadedEvent;
 import org.rstudio.studio.client.common.debugging.events.UnhandledErrorEvent;
 import org.rstudio.studio.client.common.debugging.model.ErrorHandlerType;
 import org.rstudio.studio.client.common.debugging.model.UnhandledError;
+import org.rstudio.studio.client.common.dependencies.events.InstallShinyEvent;
 import org.rstudio.studio.client.common.rpubs.events.RPubsUploadStatusEvent;
+import org.rstudio.studio.client.common.sourcemarkers.SourceMarker;
 import org.rstudio.studio.client.common.synctex.events.SynctexEditFileEvent;
 import org.rstudio.studio.client.common.synctex.model.SourceLocation;
 import org.rstudio.studio.client.htmlpreview.events.HTMLPreviewCompletedEvent;
@@ -62,14 +63,17 @@ import org.rstudio.studio.client.rmarkdown.events.RmdTemplateDiscoveryCompletedE
 import org.rstudio.studio.client.rmarkdown.model.RmdDiscoveredTemplate;
 import org.rstudio.studio.client.rmarkdown.model.RmdRenderResult;
 import org.rstudio.studio.client.rmarkdown.model.RmdShinyDocInfo;
+import org.rstudio.studio.client.rsconnect.events.EnableRStudioConnectUIEvent;
 import org.rstudio.studio.client.server.Bool;
 import org.rstudio.studio.client.shiny.events.ShinyApplicationStatusEvent;
-import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentCompletedEvent;
-import org.rstudio.studio.client.shiny.events.ShinyAppsDeploymentOutputEvent;
+import org.rstudio.studio.client.shiny.events.RSConnectDeploymentCompletedEvent;
+import org.rstudio.studio.client.shiny.events.RSConnectDeploymentOutputEvent;
 import org.rstudio.studio.client.shiny.model.ShinyApplicationParams;
+import org.rstudio.studio.client.workbench.codesearch.model.SearchPathFunctionDefinition;
 import org.rstudio.studio.client.workbench.events.*;
 import org.rstudio.studio.client.workbench.model.*;
 import org.rstudio.studio.client.workbench.prefs.events.UiPrefsChangedEvent;
+import org.rstudio.studio.client.workbench.snippets.model.SnippetsChangedEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildCompletedEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildErrorsEvent;
 import org.rstudio.studio.client.workbench.views.buildtools.events.BuildOutputEvent;
@@ -94,12 +98,15 @@ import org.rstudio.studio.client.workbench.views.history.events.HistoryEntriesAd
 import org.rstudio.studio.client.workbench.views.history.model.HistoryEntry;
 import org.rstudio.studio.client.workbench.views.output.find.events.FindOperationEndedEvent;
 import org.rstudio.studio.client.workbench.views.output.find.events.FindResultEvent;
+import org.rstudio.studio.client.workbench.views.output.lint.events.LintEvent;
+import org.rstudio.studio.client.workbench.views.output.markers.events.MarkersChangedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppCompletedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.events.SourceCppStartedEvent;
 import org.rstudio.studio.client.workbench.views.output.sourcecpp.model.SourceCppState;
-import org.rstudio.studio.client.workbench.views.packages.events.InstalledPackagesChangedEvent;
+import org.rstudio.studio.client.workbench.views.packages.events.PackageStateChangedEvent;
 import org.rstudio.studio.client.workbench.views.packages.events.LoadedPackageUpdatesEvent;
 import org.rstudio.studio.client.workbench.views.packages.events.PackageStatusChangedEvent;
+import org.rstudio.studio.client.workbench.views.packages.model.PackageState;
 import org.rstudio.studio.client.workbench.views.packages.model.PackageStatus;
 import org.rstudio.studio.client.workbench.views.plots.events.LocatorEvent;
 import org.rstudio.studio.client.workbench.views.plots.events.PlotsChangedEvent;
@@ -108,6 +115,8 @@ import org.rstudio.studio.client.workbench.views.plots.model.PlotsState;
 import org.rstudio.studio.client.workbench.views.presentation.events.PresentationPaneRequestCompletedEvent;
 import org.rstudio.studio.client.workbench.views.presentation.events.ShowPresentationPaneEvent;
 import org.rstudio.studio.client.workbench.views.presentation.model.PresentationState;
+import org.rstudio.studio.client.workbench.views.source.events.CodeBrowserNavigationEvent;
+import org.rstudio.studio.client.workbench.views.source.events.DataViewChangedEvent;
 import org.rstudio.studio.client.workbench.views.source.events.FileEditEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowContentEvent;
 import org.rstudio.studio.client.workbench.views.source.events.ShowDataEvent;
@@ -237,9 +246,10 @@ public class ClientEventDispatcher
             DataView dataView = event.getData();
             eventBus_.fireEvent(new ViewDataEvent(dataView));
          }
-         else if (type.equals(ClientEvent.InstalledPackagesChanged))
+         else if (type.equals(ClientEvent.PackageStateChanged))
          {
-            eventBus_.fireEvent(new InstalledPackagesChangedEvent());
+            PackageState newState = event.getData();
+            eventBus_.fireEvent(new PackageStateChangedEvent(newState));
          }
          else if (type.equals(ClientEvent.PackageStatusChanged))
          {
@@ -361,7 +371,7 @@ public class ClientEventDispatcher
          }
          else if (type.equals(ClientEvent.CompilePdfErrorsEvent))
          {
-            JsArray<CompileError> data = event.getData();
+            JsArray<SourceMarker> data = event.getData();
             eventBus_.fireEvent(new CompilePdfErrorsEvent(data));
          }
          else if (type.equals(ClientEvent.CompilePdfCompletedEvent))
@@ -575,15 +585,65 @@ public class ClientEventDispatcher
             RmdShinyDocInfo docInfo = event.getData();
             eventBus_.fireEvent(new RmdShinyDocStartedEvent(docInfo));
          }
-         else if (type.equals(ClientEvent.ShinyAppsDeploymentOutput))
+         else if (type.equals(ClientEvent.RSConnectDeploymentOutput))
          {
             CompileOutput output = event.getData();
-            eventBus_.fireEvent(new ShinyAppsDeploymentOutputEvent(output));
+            eventBus_.fireEvent(new RSConnectDeploymentOutputEvent(output));
          }
-         else if (type.equals(ClientEvent.ShinyAppsDeploymentCompleted))
+         else if (type.equals(ClientEvent.RSConnectDeploymentCompleted))
          {
             String url = event.getData();
-            eventBus_.fireEvent(new ShinyAppsDeploymentCompletedEvent(url));
+            eventBus_.fireEvent(new RSConnectDeploymentCompletedEvent(url));
+         }
+         else if (type.equals(ClientEvent.UserPrompt))
+         {
+            UserPrompt prompt = event.getData();
+            eventBus_.fireEvent(new UserPromptEvent(prompt));
+         }
+         else if (type.equals(ClientEvent.InstallRtools))
+         {
+            InstallRtoolsEvent.Data data = event.getData();
+            eventBus_.fireEvent(new InstallRtoolsEvent(data));
+         }
+         else if (type.equals(ClientEvent.InstallShiny))
+         {
+            String userAction = event.getData();
+            eventBus_.fireEvent(new InstallShinyEvent(userAction));
+         }
+         else if (type.equals(ClientEvent.SuspendAndRestart))
+         {
+            SuspendAndRestartEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SuspendAndRestartEvent(data));
+         }
+         else if (type.equals(ClientEvent.DataViewChanged))
+         {
+            DataViewChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new DataViewChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.ViewFunction))
+         {
+            SearchPathFunctionDefinition data = event.getData();
+            eventBus_.fireEvent(new CodeBrowserNavigationEvent(data, null, false));
+         }
+         else if (type.equals(ClientEvent.MarkersChanged))
+         {
+            MarkersChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new MarkersChangedEvent(data));
+         }
+         else if (type.equals(ClientEvent.EnableRStudioConnect))
+         {
+            EnableRStudioConnectUIEvent.Data data = event.getData();
+            eventBus_.fireEvent(new EnableRStudioConnectUIEvent(data));
+         }
+         else if (type.equals(ClientEvent.UpdateGutterMarkers))
+         {
+            LintEvent.Data data = event.getData();
+            eventBus_.fireEvent(new LintEvent(data));
+         }
+         else if (type.equals(ClientEvent.SnippetsChanged))
+         {
+            SnippetsChangedEvent.Data data = event.getData();
+            eventBus_.fireEvent(new SnippetsChangedEvent(data));
          }
          else
          {

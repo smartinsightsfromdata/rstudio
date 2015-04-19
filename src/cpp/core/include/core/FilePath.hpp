@@ -32,6 +32,7 @@
 #include <core/Error.hpp>
 #include <core/Log.hpp>
 
+namespace rstudio {
 namespace core {
 
 class Error ;
@@ -39,7 +40,10 @@ class Error ;
 class FilePath
 {
 public:
-   typedef boost::function<void(int, const FilePath&)>  
+   
+   // NOTE: function returns 'true' if computation can continue;
+   // false if computation should stop
+   typedef boost::function<bool(int, const FilePath&)>  
                                                 RecursiveIterationFunction;
 
 public:
@@ -133,6 +137,9 @@ public:
 
    // is this a hidden file?
    bool isHidden() const ;
+
+   // is this a Windows junction point?
+   bool isJunction() const ;
    
    // is this a directory?
    bool isDirectory() const ;
@@ -228,6 +235,7 @@ private:
    boost::scoped_ptr<Impl> pImpl_;
 };
 
+}
 }
 
 #endif // CORE_FILE_PATH_HPP

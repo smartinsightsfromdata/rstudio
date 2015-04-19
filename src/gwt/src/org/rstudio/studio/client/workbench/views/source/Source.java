@@ -1,7 +1,7 @@
 /*
  * Source.java
  *
- * Copyright (C) 2009-12 by RStudio, Inc.
+ * Copyright (C) 2009-15 by RStudio, Inc.
  *
  * Unless you have received this program directly from RStudio pursuant
  * to the terms of a commercial license agreement with RStudio, then
@@ -45,6 +45,7 @@ import org.rstudio.core.client.widget.Operation;
 import org.rstudio.core.client.widget.OperationWithInput;
 import org.rstudio.core.client.widget.ProgressIndicator;
 import org.rstudio.core.client.widget.ProgressOperationWithInput;
+import org.rstudio.studio.client.RStudioGinjector;
 import org.rstudio.studio.client.application.Desktop;
 import org.rstudio.studio.client.application.events.EventBus;
 import org.rstudio.studio.client.common.FileDialogs;
@@ -77,9 +78,12 @@ import org.rstudio.studio.client.workbench.model.ClientState;
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
 import org.rstudio.studio.client.workbench.model.Session;
 import org.rstudio.studio.client.workbench.model.SessionInfo;
+import org.rstudio.studio.client.workbench.model.SessionUtils;
 import org.rstudio.studio.client.workbench.model.UnsavedChangesTarget;
 import org.rstudio.studio.client.workbench.model.helper.IntStateValue;
 import org.rstudio.studio.client.workbench.prefs.model.UIPrefs;
+import org.rstudio.studio.client.workbench.snippets.SnippetHelper;
+import org.rstudio.studio.client.workbench.snippets.model.SnippetsChangedEvent;
 import org.rstudio.studio.client.workbench.ui.unsaved.UnsavedChangesDialog;
 import org.rstudio.studio.client.workbench.views.data.events.ViewDataEvent;
 import org.rstudio.studio.client.workbench.views.data.events.ViewDataHandler;
@@ -119,6 +123,7 @@ public class Source implements InsertSourceHandler,
                              OpenSourceFileHandler,
                              TabClosingHandler,
                              TabCloseHandler,
+                             TabReorderHandler,
                              SelectionHandler<Integer>,
                              TabClosedHandler,
                              FileEditHandler,
@@ -128,12 +133,14 @@ public class Source implements InsertSourceHandler,
                              CodeBrowserFinishedHandler,
                              CodeBrowserHighlightEvent.Handler,
                              SourceExtendedTypeDetectedEvent.Handler,
-                             BeforeShowHandler
+                             BeforeShowHandler,
+                             SnippetsChangedEvent.Handler
 {
    public interface Display extends IsWidget,
                                     HasTabClosingHandlers,
                                     HasTabCloseHandlers,
                                     HasTabClosedHandlers,
+                                    HasTabReorderHandlers,
                                     HasBeforeSelectionHandlers<Integer>,
                                     HasSelectionHandlers<Integer>
    {
@@ -208,10 +215,13 @@ public class Source implements InsertSourceHandler,
       pMruList_ = pMruList;
       uiPrefs_ = uiPrefs;
       rnwWeaveRegistry_ = rnwWeaveRegistry;
-
+      
+      vimCommands_ = new SourceVimCommands();
+      
       view_.addTabClosingHandler(this);
       view_.addTabCloseHandler(this);
       view_.addTabClosedHandler(this);
+      view_.addTabReorderHandler(this);
       view_.addSelectionHandler(this);
       view_.addBeforeShowHandler(this);
 
@@ -268,11 +278,15 @@ public class Source implements InsertSourceHandler,
       dynamicCommands_.add(commands.goToLine());
       dynamicCommands_.add(commands.checkSpelling());
       dynamicCommands_.add(commands.codeCompletion());
+      dynamicCommands_.add(commands.findUsages());
       dynamicCommands_.add(commands.rcppHelp());
       dynamicCommands_.add(commands.debugBreakpoint());
       dynamicCommands_.add(commands.vcsViewOnGitHub());
       dynamicCommands_.add(commands.vcsBlameOnGitHub());
       dynamicCommands_.add(commands.editRmdFormatOptions());
+      dynamicCommands_.add(commands.reformatCode());
+      dynamicCommands_.add(commands.showDiagnosticsActiveDocument());
+      dynamicCommands_.add(commands.insertRoxygenSkeleton());
       for (AppCommand command : dynamicCommands_)
       {
          command.setVisible(false);
@@ -293,7 +307,8 @@ public class Source implements InsertSourceHandler,
                192,
                commands.executeNextChunk(), 
                "Execute",
-               commands.executeNextChunk().getMenuLabel(false));
+               commands.executeNextChunk().getMenuLabel(false), 
+               "");
       }
 
       events.addHandler(ShowContentEvent.TYPE, this);
@@ -344,7 +359,7 @@ public class Source implements InsertSourceHandler,
          public void onSwitchToDoc(SwitchToDocEvent event)
          {
             ensureVisible(false);
-            view_.selectTab(event.getSelectedIndex());
+            setPhysicalTabIndex(event.getSelectedIndex());
          }
       });
 
@@ -389,7 +404,7 @@ public class Source implements InsertSourceHandler,
             manageSynctexCommands();
          }
       });
-
+      
       restoreDocuments(session);
 
       new IntStateValue(MODULE_SOURCE, KEY_ACTIVETAB, ClientState.PROJECT_PERSISTENT,
@@ -415,7 +430,7 @@ public class Source implements InsertSourceHandler,
          @Override
          protected Integer getValue()
          {
-            return view_.getActiveTabIndex();
+            return getPhysicalTabIndex();
          }
       };
 
@@ -427,8 +442,21 @@ public class Source implements InsertSourceHandler,
             AceEditorNative.setVerticallyAlignFunctionArgs(arg);
          }
       });
-       
+      
+      // adjust shortcuts when vim mode changes
+      uiPrefs_.useVimMode().bind(new CommandWithArg<Boolean>()
+      {
+         @Override
+         public void execute(Boolean arg)
+         {
+            ShortcutManager.INSTANCE.setEditorMode(arg ? 
+                  KeyboardShortcut.MODE_VIM :
+                  KeyboardShortcut.MODE_NONE);
+         }
+      });
+
       initialized_ = true;
+
       // As tabs were added before, manageCommands() was suppressed due to
       // initialized_ being false, so we need to run it explicitly
       manageCommands();
@@ -437,8 +465,88 @@ public class Source implements InsertSourceHandler,
       
       // open project docs
       openProjectDocs(session);    
+      
+      // add vim commands
+      initVimCommands();
    }
-
+   
+   private void initVimCommands()
+   {
+      vimCommands_.save(this);
+      vimCommands_.selectNextTab(this);
+      vimCommands_.selectPreviousTab(this);
+      vimCommands_.closeActiveTab(this);
+      vimCommands_.closeAllTabs(this);
+      vimCommands_.createNewDocument(this);
+      vimCommands_.saveAndCloseActiveTab(this);
+      vimCommands_.readFile(this, uiPrefs_.defaultEncoding().getValue());
+      vimCommands_.runRScript(this);
+      vimCommands_.reflowText(this);
+      vimCommands_.showVimHelp(
+            RStudioGinjector.INSTANCE.getShortcutViewer());
+      vimCommands_.showHelpAtCursor(this);
+      vimCommands_.reindent(this);
+   }
+   
+   private void closeAllTabs(boolean interactive)
+   {
+      if (interactive)
+      {
+         // call into the interactive tab closer
+         onCloseAllSourceDocs();
+      }
+      else
+      {
+         // revert unsaved targets and close tabs
+         revertUnsavedTargets(new Command()
+         {
+            @Override
+            public void execute()
+            {
+               // documents have been reverted; we can close
+               cpsExecuteForEachEditor(editors_,
+                     new CPSEditingTargetCommand()
+               {
+                  @Override
+                  public void execute(EditingTarget editingTarget,
+                                      Command continuation)
+                  {
+                     view_.closeTab(
+                           editingTarget.asWidget(),
+                           false,
+                           continuation);
+                  }
+               });
+            }
+         });
+      }
+   }
+   
+   private void saveActiveSourceDoc()
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         TextEditingTarget target = (TextEditingTarget) activeEditor_;
+         target.save();
+      }
+   }
+   
+   private void saveAndCloseActiveSourceDoc()
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         TextEditingTarget target = (TextEditingTarget) activeEditor_;
+         target.save(new Command()
+         {
+            @Override
+            public void execute()
+            {
+               onCloseSourceDoc();
+            }
+         });
+      }
+   }
+   
    /**
     * @param isNewTabPending True if a new tab is about to be created. (If
     *    false and there are no tabs already, then a new source doc might
@@ -611,31 +719,7 @@ public class Source implements InsertSourceHandler,
    @Handler
    public void onNewSourceDoc()
    {
-      // if the command was executed from a shortcut then take the
-      // current file type into account
-      if (commands_.newSourceDoc().getExecutedFromShortcut() &&
-          (activeEditor_ != null) && (activeEditor_.getTextFileType() != null))
-      {
-         TextFileType fileType = activeEditor_.getTextFileType();
-         if (fileType.isCpp())
-            onNewCppDoc();
-         else if (fileType.isRnw())
-            onNewSweaveDoc();
-         else if (fileType.isRmd())
-            onNewRMarkdownDoc();
-         else if (fileType.isRpres())
-            onNewRPresentationDoc();
-         else if (fileType.isRd())
-            onNewRDocumentationDoc();
-         else if (fileType.isRhtml())
-            onNewRHTMLDoc();
-         else
-            newDoc(fileType, null);
-      }
-      else
-      {
-         newDoc(FileTypeRegistry.R, null);
-      }
+      newDoc(FileTypeRegistry.R, null);
    }
    
    @Handler
@@ -874,6 +958,7 @@ public class Source implements InsertSourceHandler,
    {
       rmarkdown_.withRMarkdownPackage(
          "Creating R Markdown documents",
+         false,
          new CommandWithArg<RMarkdownContext>(){
 
             @Override
@@ -883,7 +968,6 @@ public class Source implements InsertSourceHandler,
                   context,
                   workbenchContext_,
                   uiPrefs_.documentAuthor().getGlobalValue(),
-                  context.getCanRenderShinyDocs(),
                   new OperationWithInput<NewRMarkdownDialog.Result>()
                   {
                      @Override
@@ -1002,7 +1086,7 @@ public class Source implements InsertSourceHandler,
                        final Position cursorPosition,
                        final CommandWithArg<EditingTarget> onSuccess)
    {
-      newSourceDocWithTemplate(fileType, name, template, cursorPosition, null, null);
+      newSourceDocWithTemplate(fileType, name, template, cursorPosition, onSuccess, null);
    }
 
    private void newSourceDocWithTemplate(
@@ -1113,6 +1197,27 @@ public class Source implements InsertSourceHandler,
    @Handler
    public void onActivateSource()
    {
+      if (activeEditor_ == null)
+      {
+         newDoc(FileTypeRegistry.R, new ResultCallback<EditingTarget, ServerError>()
+         {
+            @Override
+            public void onSuccess(EditingTarget target)
+            {
+               activeEditor_ = target;
+               doActivateSource();
+            }
+            
+         });
+      }
+      else
+      {
+         doActivateSource();
+      }
+   }
+   
+   private void doActivateSource()
+   {
       ensureVisible(false);
       if (activeEditor_ != null)
       {
@@ -1140,7 +1245,7 @@ public class Source implements InsertSourceHandler,
 
       ensureVisible(false);
       if (view_.getTabCount() > 0)
-         view_.selectTab(0);
+         setPhysicalTabIndex(0);
    }
 
    @Handler
@@ -1150,9 +1255,9 @@ public class Source implements InsertSourceHandler,
          return;
 
       ensureVisible(false);
-      int index = view_.getActiveTabIndex();
+      int index = getPhysicalTabIndex();
       if (index >= 1)
-         view_.selectTab(index - 1);
+         setPhysicalTabIndex(index - 1);
    }
 
    @Handler
@@ -1162,9 +1267,9 @@ public class Source implements InsertSourceHandler,
          return;
 
       ensureVisible(false);
-      int index = view_.getActiveTabIndex();
+      int index = getPhysicalTabIndex();
       if (index < view_.getTabCount() - 1)
-         view_.selectTab(index + 1);
+         setPhysicalTabIndex(index + 1);
    }
 
    @Handler
@@ -1175,18 +1280,23 @@ public class Source implements InsertSourceHandler,
 
       ensureVisible(false);
       if (view_.getTabCount() > 0)
-         view_.selectTab(view_.getTabCount() - 1);
+         setPhysicalTabIndex(view_.getTabCount() - 1);
    }
 
    @Handler
    public void onCloseSourceDoc()
    {
+      closeSourceDoc(true);
+   }
+   
+   void closeSourceDoc(boolean interactive)
+   {
       if (view_.getTabCount() == 0)
          return;
-
-      view_.closeTab(view_.getActiveTabIndex(), true);
+      
+      view_.closeTab(view_.getActiveTabIndex(), interactive);
    }
-
+   
    /**
     * Execute the given command for each editor, using continuation-passing
     * style. When executed, the CPSEditingTargetCommand needs to execute its
@@ -1428,6 +1538,18 @@ public class Source implements InsertSourceHandler,
       });   
    }
    
+   private void revertActiveDocument()
+   {
+      if (activeEditor_ == null)
+         return;
+      
+      if (activeEditor_.getPath() != null)
+         activeEditor_.revertChanges(null);
+      
+      // Ensure that the document is in view
+      activeEditor_.ensureCursorVisible();
+   }
+   
    private void revertUnsavedTargets(Command onCompleted)
    {
       // collect up unsaved targets
@@ -1467,7 +1589,6 @@ public class Source implements InsertSourceHandler,
       );          
             
    }
-   
    
    @Handler
    public void onOpenSourceDoc()
@@ -1552,7 +1673,6 @@ public class Source implements InsertSourceHandler,
    {
       final boolean isDebugNavigation = 
             navMethod == NavigationMethod.DebugStep ||
-            navMethod == NavigationMethod.DebugFrame || 
             navMethod == NavigationMethod.DebugEnd;
       
       final CommandWithArg<EditingTarget> editingTargetAction = 
@@ -1608,13 +1728,6 @@ public class Source implements InsertSourceHandler,
                            srcPosition, 
                            srcEndPosition, 
                            true);
-                  }
-                  else if (navMethod == NavigationMethod.DebugFrame)
-                  {
-                     target.highlightDebugLocation(
-                           srcPosition,
-                           srcEndPosition,
-                           false);
                   }
                   else if (navMethod == NavigationMethod.DebugEnd)
                   {
@@ -2057,6 +2170,16 @@ public class Source implements InsertSourceHandler,
    public void onTabClosed(TabClosedEvent event)
    {
       EditingTarget target = editors_.remove(event.getTabIndex());
+
+      tabOrder_.remove(new Integer(event.getTabIndex()));
+      for (int i = 0; i < tabOrder_.size(); i++)
+      {
+         if (tabOrder_.get(i) > event.getTabIndex())
+         {
+            tabOrder_.set(i, tabOrder_.get(i) - 1);
+         }
+      }
+
       target.onDismiss();
       if (activeEditor_ == target)
       {
@@ -2076,10 +2199,58 @@ public class Source implements InsertSourceHandler,
       }
    }
 
+   
+   @Override
+   public void onTabReorder(TabReorderEvent event)
+   {
+      syncTabOrder();
+      
+      // sanity check: make sure we're moving from a valid location and to a
+      // valid location
+      if (event.getOldPos() < 0 || event.getOldPos() >= tabOrder_.size() ||
+          event.getNewPos() < 0 || event.getNewPos() >= tabOrder_.size())
+      {
+         return;
+      }
+      
+      // remove the tab from its old position
+      int idx = tabOrder_.get(event.getOldPos());
+      tabOrder_.remove(new Integer(idx));  // force type box 
+
+      // add it to its new position 
+      tabOrder_.add(event.getNewPos(), idx);
+      
+      // sort the document IDs and send to the server
+      ArrayList<String> ids = new ArrayList<String>();
+      for (int i = 0; i < tabOrder_.size(); i++)
+      {
+         ids.add(editors_.get(tabOrder_.get(i)).getId());
+      }
+      server_.setDocOrder(ids, new VoidServerRequestCallback());
+      fireDocTabsChanged();
+   }
+
+   private void syncTabOrder()
+   {
+      // ensure the tab order is synced to the list of editors
+      for (int i = tabOrder_.size(); i < editors_.size(); i++)
+      {
+         tabOrder_.add(i);
+      }
+      for (int i = editors_.size(); i < tabOrder_.size(); i++)
+      {
+         tabOrder_.remove(i);
+      }
+   }
+
    private void fireDocTabsChanged()
    {
       if (!initialized_)
          return;
+      
+      // ensure we have a tab order (we want the popup list to match the order
+      // of the tabs)
+      syncTabOrder();
 
       String[] ids = new String[editors_.size()];
       ImageResource[] icons = new ImageResource[editors_.size()];
@@ -2087,7 +2258,7 @@ public class Source implements InsertSourceHandler,
       String[] paths = new String[editors_.size()];
       for (int i = 0; i < ids.length; i++)
       {
-         EditingTarget target = editors_.get(i);
+         EditingTarget target = editors_.get(tabOrder_.get(i));
          ids[i] = target.getId();
          icons[i] = target.getIcon();
          names[i] = target.getName().getValue();
@@ -2144,7 +2315,6 @@ public class Source implements InsertSourceHandler,
       commands_.firstTab().setEnabled(hasDocs);
       commands_.lastTab().setEnabled(hasDocs);
       commands_.switchToTab().setEnabled(hasDocs);
-      commands_.activateSource().setEnabled(hasDocs);
       commands_.setWorkingDirToActiveDoc().setEnabled(hasDocs);
 
       HashSet<AppCommand> newCommands =
@@ -2188,8 +2358,8 @@ public class Source implements InsertSourceHandler,
       // manage source navigation
       manageSourceNavigationCommands();
       
-      // manage ShinyApps commands
-      manageShinyAppsCommands();
+      // manage RSConnect commands
+      manageRSConnectCommands();
       
       // manage R Markdown commands
       manageRMarkdownCommands();
@@ -2270,17 +2440,15 @@ public class Source implements InsertSourceHandler,
       }
    }
    
-   private void manageShinyAppsCommands()
+   private void manageRSConnectCommands()
    {
       boolean shinyCommandsAvailable = 
-            session_.getSessionInfo().getShinyappsInstalled() &&
+            SessionUtils.showPublishUi(session_, uiPrefs_) &&
             (activeEditor_ != null) &&
             (activeEditor_.getPath() != null) &&
-            (activeEditor_.getExtendedFileType() == "shiny" ||
-            (activeEditor_.getExtendedFileType() == "rmarkdown" &&
-              session_.getSessionInfo().allowRmdDeployment()));
-      commands_.shinyAppsDeploy().setVisible(shinyCommandsAvailable);
-      commands_.shinyAppsTerminate().setVisible(shinyCommandsAvailable);
+            ((activeEditor_.getExtendedFileType() == "shiny"));
+      commands_.rsconnectDeploy().setVisible(shinyCommandsAvailable);
+      commands_.rsconnectConfigure().setVisible(shinyCommandsAvailable);
    }
    
    private void manageRMarkdownCommands()
@@ -2324,6 +2492,101 @@ public class Source implements InsertSourceHandler,
       HashSet<AppCommand> temp = new HashSet<AppCommand>(commands);
       temp.removeAll(dynamicCommands_);
       return temp.size() == 0;
+   }
+   
+   private void pasteFileContentsAtCursor(final String path, final String encoding)
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         final TextEditingTarget target = (TextEditingTarget) activeEditor_;
+         server_.getFileContents(path, encoding, new ServerRequestCallback<String>()
+         {
+            @Override
+            public void onResponseReceived(String content)
+            {
+               target.insertCode(content, false);
+            }
+
+            @Override
+            public void onError(ServerError error)
+            {
+               Debug.logError(error);
+            }
+         });
+      }
+   }
+   
+   private void pasteRCodeExecutionResult(final String code)
+   {
+      server_.executeRCode(code, new ServerRequestCallback<String>()
+      {
+         @Override
+         public void onResponseReceived(String output)
+         {
+            if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+            {
+               TextEditingTarget editor = (TextEditingTarget) activeEditor_;
+               editor.insertCode(output, false);
+            }
+         }
+
+         @Override
+         public void onError(ServerError error)
+         {
+            Debug.logError(error);
+         }
+      });
+   }
+   
+   private void reflowText()
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         TextEditingTarget editor = (TextEditingTarget) activeEditor_;
+         editor.reflowText();
+      }
+   }
+   
+   private void reindent()
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         TextEditingTarget editor = (TextEditingTarget) activeEditor_;
+         editor.getDocDisplay().reindent();
+      }
+   }
+   
+   private void editFile(final String path)
+   {
+      server_.ensureFileExists(
+            path,
+            new ServerRequestCallback<Boolean>()
+            {
+               @Override
+               public void onResponseReceived(Boolean success)
+               {
+                  if (success)
+                  {
+                     FileSystemItem file = FileSystemItem.createFile(path);
+                     openFile(file);
+                  }
+               }
+
+               @Override
+               public void onError(ServerError error)
+               {
+                  Debug.logError(error);
+               }
+            });
+   }
+   
+   private void showHelpAtCursor()
+   {
+      if (activeEditor_ != null && activeEditor_ instanceof TextEditingTarget)
+      {
+         TextEditingTarget editor = (TextEditingTarget) activeEditor_;
+         editor.showHelpAtCursor();
+      }
    }
 
    public void onFileEdit(FileEditEvent event)
@@ -2650,8 +2913,42 @@ public class Source implements InsertSourceHandler,
          }
       }
    }
-
+   
+   @Override
+   public void onSnippetsChanged(SnippetsChangedEvent event)
+   {
+      SnippetHelper.onSnippetsChanged(event);
+   }
+   
+   // when tabs have been reordered in the session, the physical layout of the
+   // tabs doesn't match the logical order of editors_. it's occasionally
+   // necessary to get or set the tabs by their physical order.
+   public int getPhysicalTabIndex()
+   {
+      int idx = view_.getActiveTabIndex();
+      if (idx < tabOrder_.size())
+      {
+         idx = tabOrder_.indexOf(idx);
+      }
+      return idx;
+   }
+   
+   public void setPhysicalTabIndex(int idx)
+   {
+      if (idx < tabOrder_.size())
+      {
+         idx = tabOrder_.get(idx);
+      }
+      view_.selectTab(idx);
+   }
+   
+   public EditingTarget getActiveEditor()
+   {
+      return activeEditor_;
+   }
+   
    ArrayList<EditingTarget> editors_ = new ArrayList<EditingTarget>();
+   ArrayList<Integer> tabOrder_ = new ArrayList<Integer>();
    private EditingTarget activeEditor_;
    private final Commands commands_;
    private final Display view_;
@@ -2673,6 +2970,7 @@ public class Source implements InsertSourceHandler,
    private final HashSet<AppCommand> dynamicCommands_;
    private final SourceNavigationHistory sourceNavigationHistory_ = 
                                               new SourceNavigationHistory(30);
+   private final SourceVimCommands vimCommands_;
 
    private boolean suspendSourceNavigationAdding_;
   

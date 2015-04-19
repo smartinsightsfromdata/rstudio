@@ -15,7 +15,7 @@
 package org.rstudio.studio.client.common.spelling.ui;
 
 import org.rstudio.core.client.files.FileSystemItem;
-import org.rstudio.core.client.widget.HelpButton;
+import org.rstudio.core.client.widget.LabelWithHelp;
 import org.rstudio.core.client.widget.MessageDialog;
 import org.rstudio.core.client.widget.Operation;
 import org.rstudio.core.client.widget.ProgressIndicator;
@@ -29,7 +29,6 @@ import org.rstudio.studio.client.server.ServerError;
 import org.rstudio.studio.client.server.ServerRequestCallback;
 import org.rstudio.studio.client.workbench.model.RemoteFileSystemContext;
 
-
 import com.google.gwt.core.client.GWT;
 import com.google.gwt.core.client.JsArrayString;
 import com.google.gwt.dom.client.SelectElement;
@@ -39,7 +38,6 @@ import com.google.gwt.resources.client.ClientBundle;
 import com.google.gwt.resources.client.CssResource;
 import com.google.gwt.user.client.ui.Composite;
 import com.google.gwt.user.client.ui.HorizontalPanel;
-import com.google.gwt.user.client.ui.Label;
 import com.google.gwt.user.client.ui.ListBox;
 import com.google.gwt.user.client.ui.VerticalPanel;
 import com.google.inject.Inject;
@@ -52,16 +50,12 @@ public class SpellingCustomDictionariesWidget extends Composite
       
       VerticalPanel panel = new VerticalPanel();
       
-      HorizontalPanel labelPanel = new HorizontalPanel();
-      Label label = new Label("Custom dictionaries:");
-      labelPanel.add(label);
-      HelpButton helpButton =  new HelpButton("custom_dictionaries");
-      helpButton.addStyleName(RES.styles().helpButton());
-      labelPanel.add(helpButton);
-      panel.add(labelPanel);
+      panel.add(new LabelWithHelp("Custom dictionaries:", 
+                                  "custom_dictionaries"));
       
       HorizontalPanel dictionariesPanel = new HorizontalPanel();
-      listBox_ = new ListBox(false);
+      listBox_ = new ListBox();
+      listBox_.setMultipleSelect(false);
       listBox_.addStyleName(RES.styles().listBox());
       listBox_.getElement().<SelectElement>cast().setSize(4);
       dictionariesPanel.add(listBox_);

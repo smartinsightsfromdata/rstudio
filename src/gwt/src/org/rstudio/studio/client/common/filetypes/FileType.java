@@ -23,6 +23,13 @@ import java.util.ArrayList;
 
 public abstract class FileType
 {
+   // Language modes -- for multi-mode documents
+   public static final String R_LANG_MODE = "R";
+   public static final String MARKDOWN_LANG_MODE = "Markdown";
+   public static final String C_CPP_LANG_MODE = "C_CPP";
+   public static final String TEX_LANG_MODE = "TeX";
+   public static final String STAN_MODE = "Stan";
+   
    static ArrayList<FileType> ALL_FILE_TYPES = new ArrayList<FileType>();
 
    protected FileType(String id)

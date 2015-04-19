@@ -23,6 +23,7 @@
 
 #include <core/http/Response.hpp>
 
+namespace rstudio {
 namespace core {
 namespace http {
 
@@ -79,14 +80,13 @@ private:
 
 inline void notFoundHandler(const Request& request, Response* pResponse)
 {
-   pResponse->setStatusCode(http::status::NotFound);
-   pResponse->setContentType("text/plain");
-   pResponse->setBody(request.uri() + " not found");
+   pResponse->setNotFoundError(request.uri());
 }
 
    
 } // namespace http
 } // namespace core
+} // namespace rstudio
 
 #endif // CORE_HTTP_URI_HANDLER_HPP
 

@@ -14,20 +14,18 @@
  */
 
 #include <iostream>
+#include <fstream>
 
 #include <boost/test/minimal.hpp>
-#include <boost/foreach.hpp>
 
 #include <core/Error.hpp>
 #include <core/Log.hpp>
-#include <core/FileSerializer.hpp>
 #include <core/system/System.hpp>
 
-#include <core/system/FileMode.hpp>
+#include <core/libclang/LibClang.hpp>
 
-#include <core/system/PosixSystem.hpp>
-
-using namespace core ;
+using namespace rstudio;
+using namespace rstudio::core;
 
 int test_main(int argc, char * argv[])
 {
@@ -41,61 +39,45 @@ int test_main(int argc, char * argv[])
       if (error)
          LOG_ERROR(error);
 
-      FilePath tempFile;
-      error = FilePath::tempFilePath(&tempFile);
-      if (error)
-         LOG_ERROR(error);
+      // write a C++ file
+      std::string cpp =
+        "#include <string>\n"
+        "class X { public:\n"
+        "   void test(int y, int x = 10);\n"
+        "}\n"
+        "void X::test(int y, int x) {}\n"
+        "void foobar() {\n"
+        "   X x;\n"
+        "   x."
+        "}";
+      std::ofstream ostr("foo.cpp");
+      ostr << cpp;
+      ostr.close();
 
-      error = core::writeStringToFile(tempFile, "foobar");
-      if (error)
-         LOG_ERROR(error);
-
-      core::system::FileMode mode = core::system::UserReadWriteMode;
-      error = core::system::changeFileMode(tempFile, mode);
-      if (error)
-         LOG_ERROR(error);
-
-      core::system::FileMode readMode;
-      error = core::system::getFileMode(tempFile, &readMode);
-      if (error)
-         LOG_ERROR(error);
-
-      if (mode == readMode)
-         std::cerr << "File modes match!" << std::endl;
-      else
-         std::cerr << "File modes do not match!" << std::endl;
-
-
-
-
-
-      core::system::SysInfo sysInfo;
-      error = core::system::systemInformation(&sysInfo);
-
-      std::cerr << " Cores: " << sysInfo.cores << std::endl;
-      std::cerr << " Load1: " << sysInfo.load1 << std::endl;
-      std::cerr << " Load5: " << sysInfo.load5 << std::endl;
-      std::cerr << "Load15: " << sysInfo.load15 << std::endl;
-
-      std::vector<core::system::ProcessInfo> processInfo;
-      error = core::system::processInfo("rsession", &processInfo);
-      if (error)
-         LOG_ERROR(error);
-
-      BOOST_FOREACH(core::system::ProcessInfo pi, processInfo)
+      // load libclang
+      using namespace libclang;
+      std::string diagnostics;
+      clang().load(EmbeddedLibrary(), LibraryVersion(3,4,0), &diagnostics);
+      if (!clang().isLoaded())
       {
-         std::cerr << pi << std::endl;
+         std::cerr << "Failed to load libclang: " << diagnostics << std::endl;
+         return EXIT_FAILURE;
       }
 
-      std::vector<core::system::IpAddress> addresses;
-      error = core::system::ipAddresses(&addresses);
-      if (error)
-         LOG_ERROR(error);
-
-      std::cerr << std::endl;
-      BOOST_FOREACH(const core::system::IpAddress& address, addresses)
+      // create a source index and get a translation unit for it
+      SourceIndex sourceIndex;
+      TranslationUnit tu = sourceIndex.getTranslationUnit("foo.cpp");
+      if (tu.empty())
       {
-         std::cerr << address.name << " - " << address.addr << std::endl;
+         std::cerr << "No translation unit foo.cpp" << std::endl;
+         return EXIT_FAILURE;
+      }
+
+      // code complete
+      CodeCompleteResults results = tu.codeCompleteAt("foo.cpp", 8, 6);
+      for (unsigned i = 0; i<results.getNumResults(); i++) {
+        std::cout << results.getResult(i).getTypedText() << std::endl;
+        std::cout << "   " << results.getResult(i).getText() << std::endl;
       }
 
       return EXIT_SUCCESS;

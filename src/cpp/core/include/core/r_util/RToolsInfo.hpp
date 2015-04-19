@@ -25,6 +25,7 @@
 #include <core/FilePath.hpp>
 #include <core/system/Environment.hpp>
 
+namespace rstudio {
 namespace core {
 namespace r_util {
 
@@ -42,15 +43,21 @@ public:
    bool isStillInstalled() const { return installPath_.exists(); }
 
    const std::string& name() const { return name_; }
+   std::string url(const std::string& repos) const;
    const std::string& versionPredicate() const { return versionPredicate_; }
    const FilePath& installPath() const { return installPath_; }
    const std::vector<FilePath>& pathEntries() const { return pathEntries_; }
+   const std::vector<core::system::Option> environmentVars() const
+   {
+      return environmentVars_;
+   }
 
 private:
    std::string name_;
    FilePath installPath_;
    std::string versionPredicate_;
    std::vector<FilePath> pathEntries_;
+   std::vector<core::system::Option> environmentVars_;
 };
 
 std::ostream& operator<<(std::ostream& os, const RToolsInfo& info);
@@ -74,6 +81,7 @@ void prependToSystemPath(const RToolsInfo& toolsInfo, T* pTarget)
 
 } // namespace r_util
 } // namespace core 
+} // namespace rstudio
 
 
 #endif // CORE_R_UTIL_R_TOOLS_INFO_HPP
